@@ -1,0 +1,4 @@
+#!/bin/sh
+[ "$#" -eq 0 ] || exit 2
+/usr/bin/sudo -n /usr/local/sbin/4tw-enter-offline || exit 1
+exec /usr/bin/swaymsg exit

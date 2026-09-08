@@ -1,0 +1,8 @@
+#!/usr/bin/python3 -I
+import os
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import enter_offline
+if len(sys.argv) != 1 or os.geteuid() != 0:
+    raise SystemExit(2)
+raise SystemExit(0 if enter_offline() else 1)

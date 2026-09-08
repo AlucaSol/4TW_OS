@@ -19,17 +19,20 @@ if ! inroot id kiosk >/dev/null 2>&1; then
 fi
 inroot usermod --lock --shell /usr/local/libexec/4tw-session kiosk
 inroot usermod --lock root
-# Only the Firefox profile is user-writable persistent configuration.
+# Browser state and FocusWriter emergency recovery are user-writable and persistent.
 install -d -m 755 -o 0 -g 0 "$ROOTFS/home/kiosk" "$ROOTFS/home/kiosk/.mozilla" "$ROOTFS/etc/4tw/user-config"
 install -d -m 700 -o 0 -g 0 "$ROOTFS/var/lib/4tw"
-install -d -m 700 -o 1000 -g 1000 "$ROOTFS/home/kiosk/.mozilla/4tw" "$ROOTFS/home/kiosk/.mozilla/firefox"
+install -d -m 755 -o 0 -g 0 "$ROOTFS/writing"
+install -d -m 700 -o 1000 -g 1000 "$ROOTFS/home/kiosk/.mozilla/4tw" "$ROOTFS/home/kiosk/.mozilla/firefox" \
+    "$ROOTFS/home/kiosk/.local" "$ROOTFS/home/kiosk/.local/share"
 ln -snf /usr/share/zoneinfo/Etc/UTC "$ROOTFS/etc/localtime"
 inroot gpasswd -a kiosk audio
 inroot gpasswd -a kiosk video
 inroot gpasswd -a kiosk render
 inroot systemctl set-default multi-user.target
-inroot systemctl enable NetworkManager.service chrony.service getty@tty1.service 4tw-configure.service \
+inroot systemctl enable chrony.service getty@tty1.service 4tw-configure.service \
     4tw-backlight.service 4tw-power-setup.service
+inroot systemctl disable NetworkManager.service
 inroot systemctl mask NetworkManager-wait-online.service systemd-networkd-wait-online.service \
     systemd-networkd.service systemd-networkd.socket systemd-resolved.service \
     getty@tty2.service getty@tty3.service getty@tty4.service getty@tty5.service getty@tty6.service \
@@ -47,16 +50,25 @@ for kernel in "$ROOTFS"/boot/vmlinuz-*-generic; do
     inroot update-initramfs "$action" -k "$version"
 done
 inroot visudo -cf /etc/sudoers
-inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/timezone_provider.py
+inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/timezone_provider.py \
+    /usr/local/libexec/4tw-online /usr/local/libexec/4tw-typewriter
 python3 "$PROJECT/tests/test_helpers.py"
 python3 "$PROJECT/tests/test_timezone.py"
+python3 "$PROJECT/tests/test_dual_mode.py"
 python3 "$PROJECT/tests/check-rootfs.py" "$ROOTFS" "$PROJECT"
 install -d -m 700 -o 1000 -g 1000 "$ROOTFS/run/4tw-sway-test"
+for config in sway.conf sway-online.conf sway-offline.conf; do
+    inroot runuser -u kiosk -- env XDG_RUNTIME_DIR=/run/4tw-sway-test WLR_BACKENDS=headless WLR_RENDERER=pixman \
+        sway --validate --config "/etc/4tw/$config"
+done
+install -m 644 "$PROJECT/tests/focuswriter-smoke.py" "$ROOTFS/run/4tw-sway-test/focuswriter-smoke.py"
 inroot runuser -u kiosk -- env XDG_RUNTIME_DIR=/run/4tw-sway-test WLR_BACKENDS=headless WLR_RENDERER=pixman \
-    sway --validate --config /etc/4tw/sway.conf
+    dbus-run-session -- python3 /run/4tw-sway-test/focuswriter-smoke.py | tee "$ARTIFACTS/focuswriter-smoke.json"
 inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-poweroff
 inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-backlight up
-for request in '/usr/bin/systemctl poweroff' '/bin/sh' '/usr/local/sbin/4tw-backlight default' '/usr/local/sbin/4tw-poweroff extra'; do
+inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-retry-wifi
+inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-enter-offline
+for request in '/usr/bin/systemctl poweroff' '/bin/sh' '/usr/local/sbin/4tw-backlight default' '/usr/local/sbin/4tw-poweroff extra' '/usr/local/sbin/4tw-retry-wifi extra' '/usr/local/sbin/4tw-enter-offline extra'; do
     read -ra args <<< "$request"
     if inroot runuser -u kiosk -- sudo -n -l "${args[@]}"; then
         echo "Unexpected sudo permission: $request" >&2; exit 1

@@ -1,0 +1,48 @@
+#!/usr/bin/python3 -I
+"""Open one persistent writing document in one FocusWriter instance."""
+import configparser
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import ensure_writing_document
+
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+
+while not os.path.ismount("/writing"):
+    result = subprocess.run([
+        "/usr/bin/swaynag", "--type", "error", "--layer", "overlay", "--message",
+        "The 4TW-WRITING partition is unavailable.",
+        "--button-dismiss-no-terminal", "Retry Storage",
+        "/usr/bin/sudo -n /usr/local/sbin/4tw-enter-offline",
+        "--button-dismiss-no-terminal", "Shut Down",
+        "/usr/bin/sudo -n /usr/local/sbin/4tw-poweroff",
+    ], check=False)
+    if result.returncode != 0:
+        subprocess.run(["/usr/bin/sleep", "1"], check=False)
+
+document = ensure_writing_document()
+runtime_config = Path(os.environ["XDG_RUNTIME_DIR"]) / "focuswriter-config"
+settings_folder = runtime_config / "GottCode"
+settings_folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+settings = configparser.ConfigParser()
+settings.optionxform = str
+settings["Save"] = {"DefaultFormat": "txt", "Location": "/writing/Drafts"}
+settings["Window"] = {"Fullscreen": "true"}
+with (settings_folder / "FocusWriter.conf").open("w", encoding="utf-8") as handle:
+    settings.write(handle, space_around_delimiters=False)
+
+environment = os.environ.copy()
+environment["QT_QPA_PLATFORM"] = "wayland"
+environment["XDG_CONFIG_HOME"] = str(runtime_config)
+# FocusWriter's five-minute emergency recovery cache must survive a reboot.
+environment["XDG_DATA_HOME"] = "/home/kiosk/.local/share"
+try:
+    subprocess.Popen(["/usr/bin/mako", "--config", "/etc/4tw/mako.conf"])
+    subprocess.run(["/usr/bin/focuswriter", str(document)], env=environment, check=False)
+finally:
+    subprocess.run(["/usr/bin/sync"], check=False)
+    subprocess.run(["/usr/bin/sudo", "-n", "/usr/local/sbin/4tw-poweroff"], check=False)

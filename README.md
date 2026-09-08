@@ -2,7 +2,7 @@
 
 This is a separate implementation. The existing `../bcld/` prototype is unchanged.
 
-Ubuntu 26.04 amd64 → Microsoft-signed Ubuntu shim → Canonical-signed GRUB and kernel → systemd → automatic kiosk login → Sway → one Firefox kiosk window at `https://4thewords.com/`.
+Ubuntu 26.04 amd64 → Microsoft-signed Ubuntu shim → Canonical-signed GRUB and kernel → a two-choice appliance menu → systemd → automatic kiosk login → Sway → either one Firefox kiosk at `https://4thewords.com/` or one fullscreen Offline Typewriter.
 
 Firefox uses Mozilla's official APT repository, not Snap or a third-party browser build. There is no desktop environment, bar, launcher, file manager, terminal shortcut, SSH server, or general passwordless sudo. Closing Firefox or Sway requests shutdown; it does not open a shell.
 
@@ -32,7 +32,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Image verification failed' }
 
 Stop if any stage fails; do not continue to the next command. WSL's unrelated `Failed to translate D:\Program Files\ytdlp` PATH warning does not indicate a build failure.
 
-The wrapper copies source and the existing `bcld/assets/4TW-OS.png` into the native Linux build directory:
+The wrapper copies source, including `assets/4TW-OS.png`, into the native Linux build directory:
 
 ```text
 /home/jonbe/4tw-ubuntu-sway-build/
@@ -53,7 +53,7 @@ C:\Users\jonbe\Documents\AI projects\4TW-OS\ubuntu-sway\artifacts\
 
 The IMG builder deliberately refuses to overwrite an existing IMG. Before a later rebuild, move the existing native IMG and checksum to an explicitly named backup location. Keep any Windows copy you want to retain too. Do not delete the entire native build directory: it contains the reusable rootfs and cache.
 
-The builder creates **one 12 GiB raw GPT disk image**, with a 256 MiB EFI partition, approximately 11.5 GiB ext4 system partition, and approximately 257 MiB FAT32 `4TW-CONFIG`. No ISO is needed. Several GiB remain available for the profile and future packages. It fits a nominal 32 GB USB.
+The builder creates **one 16 GiB raw GPT disk image**, with a 256 MiB EFI partition, approximately 11.5 GiB ext4 system partition, 256 MiB FAT32 `4TW-CONFIG`, and approximately 4 GiB FAT32 `4TW-WRITING`. It is still one Ubuntu root filesystem, not two operating systems. No ISO is needed, and the image fits a nominal 32 GB USB.
 
 Optional VM test tools were installed on the WSL host only. For another build host, `run-wsl.sh vm-tools` installs Ubuntu's QEMU/OVMF packages. They do not enter the USB image.
 
@@ -71,9 +71,10 @@ The separate native cache is `.build-cache/apt/archives/`. Initial preparation c
    ```
 
 2. Use Rufus or another raw-disk-image writer. Select **only the intended 32 GB SanDisk**, select this `.img`, and use raw/DD writing if asked. Flashing erases that USB. Do not select the internal SSD.
-3. Reinsert the USB into Windows. Open the `4TW-CONFIG` volume and edit `4tw.cfg` in Notepad. If Windows offers to format a Linux partition, **cancel**.
-4. Supply the Base64 SSID/password on the USB only. Leave `start_url=https://4thewords.com/` unchanged unless another approved path is required. Keep `timezone=auto`, or enter a valid IANA name such as `timezone=Australia/Darwin` for a manual override. Do not add quotation marks around values.
-5. Safely eject, then use the Acer's F12 menu to boot the USB with Secure Boot still enabled.
+3. Reinsert the USB into Windows. Open `4TW-CONFIG` and edit `4tw.cfg` in Notepad. If Windows offers to format an unfamiliar Linux or EFI partition, **cancel**. `4TW-WRITING` is the normal Windows-readable document volume.
+4. Supply the Base64 SSID/password on the USB only. Leave `start_url=https://4thewords.com/` unchanged unless another approved path is required. Keep `timezone=auto`, or enter a valid IANA name such as `timezone=Australia/Darwin` for a manual override. Do not add quotation marks around these values.
+5. Optionally edit `4tw-boot.cfg`: use `set default_mode="online"` or `set default_mode="offline"`. The five-second menu always keeps both choices; invalid/missing settings default Online. This change never requires a rebuild or reflash.
+6. Safely eject, then use the Acer's F12 menu to boot the USB with Secure Boot still enabled.
 
 Generate Base64 without embedding the password in PowerShell history:
 
@@ -89,7 +90,13 @@ Remove-Variable wifiPlain, wifiSecret, wifiName
 
 Copy each result into the corresponding `wifi_ssid_b64=` or `wifi_psk_b64=` line. **Base64 is not encryption:** the displayed text and USB file reveal the credentials to anyone who decodes them. Close that PowerShell window afterwards. The parser accepts only the four documented keys, never evaluates shell text, and rejects invalid/duplicate keys. Both credentials must be filled or both empty; this version supports personal WPA/WPA2/WPA3-transition PSK networks, not enterprise EAP or captive portals. Runtime NetworkManager credentials are written under `/run`, not persisted to the OS filesystem.
 
-Wi-Fi is attempted directly, with a bounded startup timeout. Ethernet is unmanaged and wait-online services are disabled. Without Wi-Fi, Firefox still opens and may show a connection error; retry the page after connectivity returns.
+Wi-Fi is attempted directly, with a bounded startup timeout. Ethernet is unmanaged and wait-online services are disabled. On failure, a fixed overlay offers Retry Wi-Fi, Offline Typewriter, or Shut Down. It never switches modes without the user's choice.
+
+## Two appliance modes
+
+The GRUB menu passes exactly one `4tw.mode=online` or `4tw.mode=offline` parameter into the shared Ubuntu installation. Online preserves the existing Wi-Fi/Firefox/4thewords kiosk. Offline does not launch Firefox or automatic timezone lookup; it stops NetworkManager and chrony for that boot, mounts only `4TW-WRITING` at `/writing` with `noexec,nodev,nosuid`, and launches Ubuntu's packaged FocusWriter fullscreen.
+
+FocusWriter defaults to UTF-8 `.txt` files and `/writing/Drafts`. The most recently modified eligible `.txt` opens, or a persistent timestamped Draft is created. FocusWriter 1.9.0 has a persistent five-minute emergency recovery cache but no ordinary timed file autosave, so **Ctrl+S remains necessary**. Its own New/Open/Save/Save As dialogs stay usable. See `docs/DUAL-MODE.md` for Windows access and the Acer test checklist.
 
 ## Clock and travel
 
@@ -108,7 +115,7 @@ Windows must separately be configured once to interpret the RTC as UTC using the
 
 Brightness defaults to approximately 50%, with a 10–100% range. Missing battery/rate/backlight data produces an unavailable message or omitted field, not fabricated values. Runtime estimates are approximate and shown only while discharging with usable measurements. The battery overlay also reports the NVIDIA display device as `suspended`, `active` or `unavailable` when that state can be determined reliably. The normal physical power button requests clean power-off. Lid closing is configured to do nothing; use shutdown before packing the laptop away.
 
-Editing shortcuts such as copy/paste, undo, select-all and bold remain available. Browser-management shortcuts are intercepted globally. No terminal appears. PipeWire/WirePlumber supplies normal browser audio without a mixer application.
+Editing shortcuts such as copy/paste, undo, select-all and bold remain available. Browser-management shortcuts are intercepted in Online mode; FocusWriter's writing commands remain available Offline. No terminal appears. PipeWire/WirePlumber supplies normal browser audio without a mixer application.
 
 ## Website policy and security
 
@@ -122,7 +129,7 @@ The integrated GPU is preferred when Linux reports it driving the internal panel
 
 ## Persistence and updates
 
-The normal ext4 system and Firefox profile persist, including cookies and website storage needed for login. Startup tabs are not restored; each boot opens only the configured URL. `/tmp`, `/var/tmp`, logs and browser cache use RAM; root uses `noatime`, and Firefox recovery-state writes are limited to five-minute intervals. There is no USB swap. Always shut down cleanly before removing power or the USB.
+The normal ext4 system, Firefox profile and FocusWriter emergency recovery state persist. Offline documents persist separately on `4TW-WRITING`. Startup tabs are not restored; Online opens only the configured URL. `/tmp`, `/var/tmp`, logs and browser cache use RAM; root uses `noatime`, and Firefox recovery-state writes are limited to five-minute intervals. There is no USB swap. Always shut down cleanly before removing power or the USB so the writable FAT32 filesystem is unmounted safely.
 
 For Ubuntu/Firefox updates, back up anything important and rebuild using the same four stages above. The packages stage refreshes signed indexes and installs current packages; configure regenerates initramfs and validates the kiosk; image copies the current signed boot chain. Reflash the new image, restore `4tw.cfg`, and log in again. Reflashing resets the old profile, so ensure writing has synced to 4thewords first. Automatic APT timers are intentionally disabled to avoid unattended writes during a writing session. There is no kiosk-admin shell or SSH path.
 
@@ -130,6 +137,6 @@ For Ubuntu/Firefox updates, back up anything important and rebuild using the sam
 
 ## Verification
 
-See `docs/BUILD-NOTES.md`, `docs/VERIFICATION.md`, `docs/POWER-OPTIMISATION.md`, `docs/TIMEZONE.md`, and the actual artifact logs. Static verification mounts the final IMG read-only, checks its partitions/files/signatures/configuration, tests a copy of the FAT configuration partition for writes, and rechecks SHA-256 afterwards. The build-only Firefox test uses a temporary profile and temporary automation flags; neither is shipped. Physical Acer checks are explicitly separate.
+See `docs/BUILD-NOTES.md`, `docs/VERIFICATION.md`, `docs/DUAL-MODE.md`, `docs/POWER-OPTIMISATION.md`, `docs/TIMEZONE.md`, and the actual artifact logs. Static verification mounts the final IMG read-only, checks all partitions/files/signatures/configuration, write-tests copies of both FAT data partitions, and rechecks SHA-256 afterwards. Build-only Firefox and FocusWriter tests use temporary state that is not shipped. Physical Acer checks are explicitly separate.
 
 Implementation references: [Ubuntu Secure Boot](https://documentation.ubuntu.com/security/docs/security-features/platform-protections/secure-boot/), [Mozilla official Linux packages](https://support.mozilla.org/en-US/kb/install-firefox-linux), [Firefox kiosk mode](https://support.mozilla.org/en-US/kb/firefox-enterprise-kiosk-mode), [WebsiteFilter](https://firefox-admin-docs.mozilla.org/reference/policies/websitefilter/), [Firefox policies](https://mozilla.github.io/policy-templates/), [Sway configuration](https://manpages.ubuntu.com/manpages/resolute/man5/sway.5.html), [Mako overlay configuration](https://manpages.ubuntu.com/manpages/resolute/man5/mako.5.html).

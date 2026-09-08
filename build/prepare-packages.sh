@@ -44,7 +44,7 @@ inroot apt-get -y --no-install-recommends dist-upgrade
 mapfile -t packages < <(sed '/^#/d; /^$/d' "$PROJECT/config/packages.txt")
 inroot apt-get -y --no-install-recommends install "${packages[@]}"
 inroot dpkg-query -W '-f=${Package}\t${Version}\t${Architecture}\n' > "$ARTIFACTS/packages.tsv"
-inroot apt-cache policy firefox shim-signed grub-efi-amd64-signed linux-generic > "$ARTIFACTS/package-origins.txt"
+inroot apt-cache policy firefox focuswriter qt6-wayland shim-signed grub-efi-amd64-signed linux-generic > "$ARTIFACTS/package-origins.txt"
 unmount_chroot
 touch "$WORK/packages.ok"
 echo 'Package preparation complete; no disk image has been created.'

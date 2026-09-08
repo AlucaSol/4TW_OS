@@ -20,6 +20,8 @@ swaybg
 mako-notifier
 libnotify-bin
 firefox
+focuswriter
+qt6-wayland
 libavcodec-extra
 fonts-dejavu-core
 fonts-liberation

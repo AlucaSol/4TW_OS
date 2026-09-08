@@ -17,6 +17,13 @@ case "$gpu" in
     /dev/dri/card[0-9]*) [ -c "$gpu" ] && export WLR_DRM_DEVICES="$gpu" ;;
 esac
 unset gpu
-/usr/bin/dbus-run-session -- /usr/bin/sway --config /etc/4tw/sway.conf
-# Compositor exit cannot fall through into a desktop or login shell.
+mode=$(/usr/bin/cat /run/4tw/mode 2>/dev/null)
+case "$mode" in offline) config=/etc/4tw/sway-offline.conf ;; *) mode=online; config=/etc/4tw/sway-online.conf ;; esac
+/usr/bin/dbus-run-session -- /usr/bin/sway --config "$config"
+# Only the fixed failed-Wi-Fi action can change Online to Offline. Start a new
+# compositor session in that one case; every other compositor exit powers off.
+next=$(/usr/bin/cat /run/4tw/mode 2>/dev/null)
+if [ "$mode" = online ] && [ "$next" = offline ]; then
+    exec /usr/local/libexec/4tw-session
+fi
 exec /usr/bin/sudo -n /usr/local/sbin/4tw-poweroff

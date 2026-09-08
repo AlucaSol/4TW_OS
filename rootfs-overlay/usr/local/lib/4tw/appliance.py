@@ -1,11 +1,13 @@
 """Fixed-purpose kiosk helpers. No config values are evaluated as code."""
 import base64
 import binascii
+from datetime import datetime
 import json
 import math
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import time
 from urllib.parse import urlsplit
@@ -17,6 +19,12 @@ TIMEZONE_FILE = Path("/etc/timezone")
 TIMEZONE_STATE = Path("/var/lib/4tw/timezone")
 TIMEZONE_MODE = Path("/run/4tw/timezone-mode")
 TIMEZONE_ATTEMPTED = Path("/run/4tw/timezone-attempted")
+APPLIANCE_MODE = Path("/run/4tw/mode")
+WIFI_STATUS = Path("/run/4tw/wifi-status")
+WRITING_STATUS = Path("/run/4tw/writing-status")
+WRITING_ROOT = Path("/writing")
+NETWORK_CONNECTION = Path("/run/NetworkManager/system-connections/4tw-wifi.nmconnection")
+NETWORK_UUID = "2d5b597a-e4aa-4499-8b09-7ba9ec67508d"
 UTC_ZONE = "Etc/UTC"
 SYS_POWER = Path("/sys/class/power_supply")
 SYS_BACKLIGHT = Path("/sys/class/backlight")
@@ -400,6 +408,136 @@ def permitted_url(url, patterns):
     return False
 
 
+def boot_mode(cmdline):
+    """Accept one explicit fixed kernel mode; all malformed input is Online."""
+    values = [item.partition("=")[2] for item in cmdline.split() if item.startswith("4tw.mode=")]
+    return values[0] if len(values) == 1 and values[0] in {"online", "offline"} else "online"
+
+
+def _write_runtime(path, value):
+    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    path.write_text(value + "\n", encoding="utf-8")
+    path.chmod(0o644)
+
+
+def _run_fixed(command, runner=subprocess.run, timeout=10):
+    try:
+        result = runner(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=timeout, check=False)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def connect_wifi(connection_path=NETWORK_CONNECTION, runner=subprocess.run):
+    """Make one bounded attempt using only the builder-created NM keyfile."""
+    if not connection_path.is_file():
+        return False
+    commands = (
+        (["/usr/bin/nmcli", "networking", "on"], 5),
+        (["/usr/bin/nmcli", "radio", "wifi", "on"], 5),
+        (["/usr/bin/nmcli", "connection", "load", str(connection_path)], 5),
+        (["/usr/bin/nmcli", "--wait", "12", "connection", "up", "uuid", NETWORK_UUID], 15),
+    )
+    return all(_run_fixed(command, runner, timeout) for command, timeout in commands)
+
+
+def _start_network(runner=subprocess.run):
+    return _run_fixed(["/usr/bin/systemctl", "start", "NetworkManager.service"], runner, 8)
+
+
+def _schedule_timezone(runner=subprocess.run):
+    _run_fixed(["/usr/bin/systemctl", "--no-block", "start", "4tw-timezone-auto.service"], runner, 3)
+
+
+def retry_wifi(runner=subprocess.run, connection_path=NETWORK_CONNECTION,
+               mode_path=APPLIANCE_MODE, status_path=WIFI_STATUS):
+    """Root-only entry point used by one exact sudo rule; accepts no input."""
+    try:
+        if mode_path.read_text(encoding="utf-8").strip() != "online":
+            return False
+    except OSError:
+        return False
+    connected = _start_network(runner) and connect_wifi(connection_path, runner)
+    _write_runtime(status_path, "connected" if connected else "failed")
+    if connected:
+        try:
+            automatic = TIMEZONE_MODE.read_text(encoding="utf-8").strip() == "auto"
+        except OSError:
+            automatic = False
+        if automatic:
+            _schedule_timezone(runner)
+    return connected
+
+
+def enter_offline(runner=subprocess.run, is_mount=os.path.ismount,
+                  mode_path=APPLIANCE_MODE, status_path=WRITING_STATUS):
+    """Disable networking for this boot and mount only 4TW-WRITING."""
+    _write_runtime(mode_path, "offline")
+    # All commands and unit names are fixed; failures never expose a shell.
+    for command, timeout in (
+        (["/usr/bin/systemctl", "stop", "4tw-timezone-auto.service"], 5),
+        (["/usr/bin/nmcli", "networking", "off"], 5),
+        (["/usr/bin/nmcli", "radio", "wifi", "off"], 5),
+        (["/usr/bin/systemctl", "stop", "NetworkManager.service"], 8),
+        (["/usr/bin/systemctl", "stop", "chrony.service"], 5),
+        (["/usr/bin/systemctl", "start", "writing.mount"], 12),
+    ):
+        _run_fixed(command, runner, timeout)
+    ready = bool(is_mount(str(WRITING_ROOT)))
+    _write_runtime(status_path, "ready" if ready else "failed")
+    return ready
+
+
+def recent_writing_document(root=WRITING_ROOT):
+    """Return the most recently modified eligible user .txt file."""
+    candidates = []
+    try:
+        walker = os.walk(root, topdown=True, followlinks=False)
+        for folder, directories, files in walker:
+            directories[:] = sorted(name for name in directories
+                                     if not name.startswith((".", "~")) and
+                                     name not in {"System Volume Information", "$RECYCLE.BIN"})
+            for name in sorted(files):
+                lower = name.lower()
+                if (not lower.endswith(".txt") or lower == "readme.txt" or
+                        name.startswith((".", "~", ".#", "~$")) or name.endswith("~") or
+                        lower.endswith((".tmp.txt", ".temp.txt", ".recovery.txt", ".autosave.txt"))):
+                    continue
+                path = Path(folder, name)
+                try:
+                    details = path.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISREG(details.st_mode):
+                    candidates.append((details.st_mtime_ns, path.as_posix().casefold(), path))
+    except OSError:
+        return None
+    return max(candidates)[2] if candidates else None
+
+
+def ensure_writing_document(root=WRITING_ROOT, now=None):
+    """Select a recent document or atomically create a persistent empty draft."""
+    selected = recent_writing_document(root)
+    if selected is not None:
+        return selected
+    drafts = root / "Drafts"
+    drafts.mkdir(mode=0o755, parents=True, exist_ok=True)
+    timestamp = (now or datetime.now()).strftime("%Y-%m-%d-%H%M")
+    for suffix in ("", *(f"-{number}" for number in range(2, 1000))):
+        candidate = drafts / f"Draft-{timestamp}{suffix}.txt"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(candidate, flags, 0o644)
+        except FileExistsError:
+            continue
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        return candidate
+    raise OSError("Could not allocate a unique draft filename")
+
+
 def valid_timezone(value, zoneinfo_root=ZONEINFO):
     """Return a safe installed IANA timezone name, or None."""
     if not isinstance(value, str) or not value or len(value) > 128:
@@ -576,6 +714,11 @@ def nm_keyfile(ssid, psk):
 def configure_runtime():
     runtime = Path("/run/4tw")
     runtime.mkdir(mode=0o755, exist_ok=True)
+    try:
+        mode = boot_mode(Path("/proc/cmdline").read_text(encoding="utf-8"))
+    except OSError:
+        mode = "online"
+    _write_runtime(APPLIANCE_MODE, mode)
     url, ssid, psk, timezone = DEFAULT_URL, b"", "", "auto"
     try:
         patterns = json.loads(Path("/etc/4tw/allowed-sites.json").read_text())
@@ -585,44 +728,29 @@ def configure_runtime():
     except (OSError, ValueError, UnicodeError):
         # Never print the input or a decoder exception containing credentials.
         print("4TW-OS: configuration unavailable or invalid; using safe defaults.", flush=True)
-    (runtime / "start-url").write_text(url + "\n")
-    (runtime / "start-url").chmod(0o644)
-    (runtime / "timezone-mode").write_text(timezone + "\n")
-    (runtime / "timezone-mode").chmod(0o644)
+    _write_runtime(runtime / "start-url", url)
+    _write_runtime(TIMEZONE_MODE, timezone)
     applied_zone, applied = prepare_timezone(timezone)
     if not applied:
         print("4TW-OS: could not apply timezone " + applied_zone + "; continuing kiosk startup.", flush=True)
+
+    if mode == "offline":
+        if not enter_offline():
+            print("4TW-OS: writing storage is unavailable; the fixed session prompt will retry.", flush=True)
+        return
+
+    _write_runtime(WIFI_STATUS, "failed")
     if not ssid:
         print("4TW-OS: Wi-Fi credentials are not configured.", flush=True)
     else:
-        connections = Path("/run/NetworkManager/system-connections")
-        connections.mkdir(mode=0o700, parents=True, exist_ok=True)
-        connection = connections / "4tw-wifi.nmconnection"
+        NETWORK_CONNECTION.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(connection, flags, 0o600)
+        fd = os.open(NETWORK_CONNECTION, flags, 0o600)
         with os.fdopen(fd, "w") as handle:
             handle.write(nm_keyfile(ssid, psk))
-        try:
-            for command in (
-                ["radio", "wifi", "on"],
-                ["connection", "load", str(connection)],
-                ["--wait", "20", "connection", "up", "uuid", "2d5b597a-e4aa-4499-8b09-7ba9ec67508d"],
-            ):
-                result = subprocess.run(["/usr/bin/nmcli", *command], stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL, timeout=25, check=False)
-                if result.returncode:
-                    print("4TW-OS: Wi-Fi not connected yet; continuing kiosk startup.", flush=True)
-                    break
-        except (OSError, subprocess.TimeoutExpired):
-            print("4TW-OS: Wi-Fi attempt timed out; continuing kiosk startup.", flush=True)
-    if timezone == "auto":
-        try:
-            subprocess.run(
-                ["/usr/bin/systemctl", "--no-block", "start", "4tw-timezone-auto.service"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=3,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+        connected = _start_network() and connect_wifi()
+        _write_runtime(WIFI_STATUS, "connected" if connected else "failed")
+        if not connected:
+            print("4TW-OS: Wi-Fi did not connect; the fixed session prompt will offer choices.", flush=True)
+        elif timezone == "auto":
+            _schedule_timezone()

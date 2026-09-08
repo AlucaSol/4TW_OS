@@ -15,10 +15,10 @@ case "${1:-}" in
 esac
 mkdir -p "$NATIVE/artifacts" "$NATIVE/assets"
 rsync -rt --exclude=.work --exclude=.build-cache --exclude=artifacts --exclude=__pycache__ "$SOURCE/" "$NATIVE/"
-install -m 644 "$SOURCE/../bcld/assets/4TW-OS.png" "$NATIVE/assets/4TW-OS.png"
+install -m 644 "$SOURCE/assets/4TW-OS.png" "$NATIVE/assets/4TW-OS.png"
 export FOURTW_WINDOWS_SOURCE="$SOURCE"
 bash "$NATIVE/build/$stage.sh" 2>&1 | tee -a "$NATIVE/artifacts/$stage.log"
 mkdir -p "$SOURCE/artifacts"
 # Large IMG export is a separate Windows Copy-Item operation (see README).
-# Do not start concurrent 12 GiB sparse-file copies for diagnostic stages.
+# Do not start concurrent large sparse-file copies for diagnostic stages.
 rsync -rt --exclude='*.img' "$NATIVE/artifacts/" "$SOURCE/artifacts/"

@@ -12,6 +12,10 @@ python3 - "$ARTIFACTS/browser-smoke.json" <<'PY'
 import json, sys
 assert json.load(open(sys.argv[1])).get('passed'), 'Firefox smoke test has not passed'
 PY
+python3 - "$ARTIFACTS/focuswriter-smoke.json" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1])).get('passed'), 'FocusWriter smoke test has not passed'
+PY
 IMAGE="$ARTIFACTS/4TW-OS_RELEASE.img"
 [[ ! -e "$IMAGE" ]] || { echo "Refusing to overwrite existing image: $IMAGE" >&2; exit 1; }
 [[ $(du -sx -B1 "$ROOTFS" | cut -f1) -lt 7000000000 ]] || {
@@ -35,44 +39,52 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
-truncate -s 12G "$IMAGE"
+truncate -s 16G "$IMAGE"
 sgdisk --clear --new=1:2048:+256M --typecode=1:ef00 --change-name=1:4TW-EFI \
     --new=2:0:+11774M --typecode=2:8300 --change-name=2:4TW-ROOT \
-    --new=3:0:0 --typecode=3:0700 --change-name=3:4TW-CONFIG "$IMAGE"
+    --new=3:0:+256M --typecode=3:0700 --change-name=3:4TW-CONFIG \
+    --new=4:0:0 --typecode=4:0700 --change-name=4:4TW-WRITING "$IMAGE"
 LOOP=$(losetup --find --show --partscan "$IMAGE")
 [[ "$LOOP" =~ ^/dev/loop[0-9]+$ ]] || exit 1
 [[ $(losetup -n -O BACK-FILE "$LOOP") == "$IMAGE" ]] || exit 1
 udevadm settle
-for part in 1 2 3; do [[ -b "${LOOP}p$part" ]] || { echo 'Loop partition missing.' >&2; exit 1; }; done
+for part in 1 2 3 4; do [[ -b "${LOOP}p$part" ]] || { echo 'Loop partition missing.' >&2; exit 1; }; done
 mkfs.vfat -F 32 -n 4TW-EFI "${LOOP}p1"
 mkfs.ext4 -F -L 4TW-ROOT -m 1 "${LOOP}p2"
 mkfs.vfat -F 32 -n 4TW-CONFIG "${LOOP}p3"
+mkfs.vfat -F 32 -n 4TW-WRITING "${LOOP}p4"
 ROOT_UUID=$(blkid -s UUID -o value "${LOOP}p2")
 ESP_UUID=$(blkid -s UUID -o value "${LOOP}p1")
 CONFIG_UUID=$(blkid -s UUID -o value "${LOOP}p3")
+WRITING_UUID=$(blkid -s UUID -o value "${LOOP}p4")
 mount "${LOOP}p2" "$MOUNT"; IMAGE_MOUNTS+=("$MOUNT")
 rsync -aHAX --numeric-ids "$ROOTFS/" "$MOUNT/"
-mkdir -p "$MOUNT/boot/efi" "$MOUNT/config"
+mkdir -p "$MOUNT/boot/efi" "$MOUNT/config" "$MOUNT/writing"
 mount "${LOOP}p1" "$MOUNT/boot/efi"; IMAGE_MOUNTS+=("$MOUNT/boot/efi")
 mount "${LOOP}p3" "$MOUNT/config"; IMAGE_MOUNTS+=("$MOUNT/config")
+mount "${LOOP}p4" "$MOUNT/writing"; IMAGE_MOUNTS+=("$MOUNT/writing")
 install -m 644 "$PROJECT/config/4tw.cfg" "$MOUNT/config/4tw.cfg"
+install -m 644 "$PROJECT/config/4tw-boot.cfg" "$MOUNT/config/4tw-boot.cfg"
 install -m 644 "$PROJECT/docs/CONFIG-README.txt" "$MOUNT/config/README.txt"
+mkdir -p "$MOUNT/writing/Drafts"
+install -m 644 "$PROJECT/docs/WRITING-README.txt" "$MOUNT/writing/README.txt"
 touch "$MOUNT/boot/efi/4tw-esp.marker"
-python3 - "$MOUNT" "$ROOT_UUID" "$ESP_UUID" "$CONFIG_UUID" <<'PY'
+python3 - "$MOUNT" "$ROOT_UUID" "$ESP_UUID" "$CONFIG_UUID" "$WRITING_UUID" <<'PY'
 from pathlib import Path
 import sys
-root, root_uuid, esp_uuid, config_uuid = sys.argv[1:]
+root, root_uuid, esp_uuid, config_uuid, writing_uuid = sys.argv[1:]
 Path(root, 'etc/fstab').write_text(
     f'UUID={root_uuid} / ext4 defaults,noatime,errors=remount-ro 0 1\n'
     f'UUID={esp_uuid} /boot/efi vfat defaults,umask=0077,nosuid,nodev,noexec 0 2\n'
     f'UUID={config_uuid} /config vfat defaults,umask=0077,nosuid,nodev,noexec,nofail,x-systemd.device-timeout=30s 0 2\n'
+    f'UUID={writing_uuid} /writing vfat noauto,nofail,noexec,nodev,nosuid,uid=1000,gid=1000,fmask=0133,dmask=0022,shortname=mixed,x-systemd.device-timeout=10s,x-systemd.mount-timeout=10s 0 2\n'
     'tmpfs /tmp tmpfs defaults,nosuid,nodev,mode=1777,size=512M 0 0\n'
     'tmpfs /var/tmp tmpfs defaults,nosuid,nodev,mode=1777,size=256M 0 0\n'
 )
 PY
 chroot "$MOUNT" /usr/local/sbin/4tw-refresh-boot
 grub-script-check "$MOUNT/boot/grub/grub.cfg"
-df -h "$MOUNT" "$MOUNT/boot/efi" "$MOUNT/config"
+df -h "$MOUNT" "$MOUNT/boot/efi" "$MOUNT/config" "$MOUNT/writing"
 sync
 cleanup
 sgdisk --verify "$IMAGE"

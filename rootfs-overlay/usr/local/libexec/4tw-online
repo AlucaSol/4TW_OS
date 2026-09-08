@@ -1,0 +1,32 @@
+#!/usr/bin/python3 -I
+"""Launch exactly one browser, or a fixed Wi-Fi failure prompt."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+
+while True:
+    try:
+        mode = Path("/run/4tw/mode").read_text(encoding="utf-8").strip()
+        status = Path("/run/4tw/wifi-status").read_text(encoding="utf-8").strip()
+    except OSError:
+        mode, status = "online", "failed"
+    if mode == "offline":
+        raise SystemExit(0)
+    if status == "connected":
+        os.execv("/usr/local/libexec/4tw-browser", ["/usr/local/libexec/4tw-browser"])
+    result = subprocess.run([
+        "/usr/bin/swaynag", "--type", "warning", "--layer", "overlay", "--message",
+        "The configured Wi-Fi did not connect.",
+        "--button-dismiss-no-terminal", "Retry Wi-Fi",
+        "/usr/bin/sudo -n /usr/local/sbin/4tw-retry-wifi",
+        "--button-dismiss-no-terminal", "Offline Typewriter",
+        "/usr/local/libexec/4tw-switch-offline",
+        "--button-dismiss-no-terminal", "Shut Down",
+        "/usr/bin/sudo -n /usr/local/sbin/4tw-poweroff",
+    ], check=False)
+    if result.returncode != 0:
+        subprocess.run(["/usr/bin/sleep", "1"], check=False)

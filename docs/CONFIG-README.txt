@@ -18,6 +18,21 @@ Set a validated IANA name such as timezone=Australia/Darwin for a manual
 override; manual mode makes no timezone-provider request. Restore auto after
 travel if you want detection again. The hardware clock always remains UTC.
 
+The separate 4tw-boot.cfg controls only the boot menu's automatic choice:
+
+set default_mode="online"
+
+or:
+
+set default_mode="offline"
+
+Both Online and Offline remain manually selectable for five seconds. Missing
+or invalid values safely default to Online. No rebuild or reflash is required.
+
+Offline Typewriter documents live on the separate FAT32 volume 4TW-WRITING.
+FocusWriter defaults to plain .txt in its Drafts folder. Press Ctrl+S for normal
+saves; its emergency recovery cache is not ordinary timed document autosave.
+
 Use Ctrl+Alt+Delete for clean shutdown before unplugging.
-If Windows offers to format another partition on this USB, CANCEL.
+If Windows offers to format an unfamiliar Linux or EFI partition, CANCEL.
 Never format the Linux system or EFI partition.
