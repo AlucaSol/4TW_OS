@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -I
+import subprocess
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import notify
+if len(sys.argv) != 2 or sys.argv[1] not in {"up", "down"}:
+    raise SystemExit(2)
+try:
+    result = subprocess.run(["/usr/bin/sudo", "-n", "/usr/local/sbin/4tw-backlight", sys.argv[1]],
+                            check=False, capture_output=True, text=True, timeout=5)
+    value = result.stdout.strip()
+    body = f"Brightness: {int(value)}%" if result.returncode == 0 and value.isdecimal() else "Brightness control unavailable"
+except (OSError, subprocess.TimeoutExpired):
+    body = "Brightness control unavailable"
+notify(body)

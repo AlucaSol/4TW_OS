@@ -1,0 +1,9 @@
+#!/bin/sh
+# NetworkManager supplies these two fixed fields; no value is evaluated.
+[ "$#" -eq 2 ] || exit 0
+case "$2" in
+    up|vpn-up|connectivity-change) ;;
+    *) exit 0 ;;
+esac
+[ "$(/usr/bin/cat /run/4tw/timezone-mode 2>/dev/null)" = auto ] || exit 0
+exec /usr/bin/systemctl --no-block start 4tw-timezone-auto.service

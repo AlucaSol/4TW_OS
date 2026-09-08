@@ -1,0 +1,4 @@
+#!/bin/sh
+[ "$#" -eq 0 ] || exit 2
+/usr/bin/sync
+exec /usr/bin/systemctl poweroff

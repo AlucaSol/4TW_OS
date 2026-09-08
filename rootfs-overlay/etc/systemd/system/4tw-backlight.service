@@ -1,0 +1,11 @@
+[Unit]
+Description=Set internal panel brightness to approximately 50 percent
+After=systemd-udev-trigger.service
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/local/sbin/4tw-backlight default
+TimeoutStartSec=20
+
+[Install]
+WantedBy=multi-user.target

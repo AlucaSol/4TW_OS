@@ -1,0 +1,3 @@
+Defaults:kiosk env_reset, !setenv
+Defaults:kiosk secure_path=/usr/sbin:/usr/bin:/sbin:/bin
+kiosk ALL=(root) NOPASSWD: /usr/local/sbin/4tw-poweroff "", /usr/local/sbin/4tw-backlight up, /usr/local/sbin/4tw-backlight down

@@ -1,0 +1,36 @@
+#!/usr/bin/python3 -I
+import fcntl
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import DEFAULT_URL, permitted_url
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+# One launcher per login; Sway config has exec, not exec_always.
+lock = open(Path(os.environ["XDG_RUNTIME_DIR"]) / "4tw-browser.lock", "w")
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit(0)
+url = DEFAULT_URL
+try:
+    candidate = Path("/run/4tw/start-url").read_text().strip()
+    if permitted_url(candidate, json.loads(Path("/etc/4tw/allowed-sites.json").read_text())):
+        url = candidate
+except (OSError, ValueError):
+    pass
+subprocess.run(["/usr/bin/systemctl", "--user", "import-environment", "WAYLAND_DISPLAY",
+                "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "XDG_CACHE_HOME"], check=False)
+subprocess.run(["/usr/bin/systemctl", "--user", "start", "pipewire.socket", "pipewire-pulse.socket", "wireplumber.service"], check=False)
+subprocess.Popen(["/usr/bin/mako", "--config", "/etc/4tw/mako.conf"])
+try:
+    # Exactly one normal invocation and exactly one positional URL. The profile
+    # preserves cookies/login, not startup tabs. Never add --private-window.
+    subprocess.run(["/usr/bin/firefox", "--kiosk", "--no-remote", "--profile",
+                    "/home/kiosk/.mozilla/4tw", url], check=False)
+finally:
+    # Even a browser crash/close cannot expose a usable desktop.
+    subprocess.run(["/usr/bin/sudo", "-n", "/usr/local/sbin/4tw-poweroff"], check=False)

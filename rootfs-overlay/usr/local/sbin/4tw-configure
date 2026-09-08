@@ -1,0 +1,7 @@
+#!/usr/bin/python3 -I
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import configure_runtime
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+configure_runtime()

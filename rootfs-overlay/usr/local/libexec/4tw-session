@@ -1,0 +1,22 @@
+#!/bin/sh
+# This is the kiosk account's login program, not an interactive shell.
+[ "$#" -eq 0 ] || exit 2
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=sway
+export MOZ_ENABLE_WAYLAND=1
+export XDG_CACHE_HOME="$XDG_RUNTIME_DIR/cache"
+export XDG_CONFIG_HOME=/etc/4tw/user-config
+mkdir -p "$XDG_CACHE_HOME"
+# Never inherit an offload request that selects a discrete GPU. Native Wayland
+# rendering and hardware acceleration remain enabled.
+unset DRI_PRIME __NV_PRIME_RENDER_OFFLOAD __GLX_VENDOR_LIBRARY_NAME VK_LAYER_NV_optimus
+# Select only a card proven to drive the internal panel (or the sole card).
+# Empty output means the topology is ambiguous and wlroots should autodetect.
+gpu=$(/usr/local/bin/4tw-select-gpu)
+case "$gpu" in
+    /dev/dri/card[0-9]*) [ -c "$gpu" ] && export WLR_DRM_DEVICES="$gpu" ;;
+esac
+unset gpu
+/usr/bin/dbus-run-session -- /usr/bin/sway --config /etc/4tw/sway.conf
+# Compositor exit cannot fall through into a desktop or login shell.
+exec /usr/bin/sudo -n /usr/local/sbin/4tw-poweroff

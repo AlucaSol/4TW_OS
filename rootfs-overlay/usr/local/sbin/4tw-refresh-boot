@@ -1,0 +1,62 @@
+#!/usr/bin/python3 -I
+"""Refresh removable-media boot files inside THIS mounted installation only.
+
+Used by the builder and offline maintenance, never exposed by kiosk sudo.
+No grub-install, efibootmgr, device enumeration, or NVRAM writes.
+"""
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+if len(sys.argv) != 1 or os.geteuid() != 0:
+    raise SystemExit(2)
+if not Path("/etc/4tw-release").is_file() or not Path("/boot/efi/4tw-esp.marker").is_file():
+    raise SystemExit("4TW-OS root/ESP markers missing; refusing boot-file changes")
+root_uuid = None
+for line in Path("/etc/fstab").read_text().splitlines():
+    fields = line.split()
+    if len(fields) > 2 and fields[1] == "/" and re.fullmatch(r"UUID=[a-fA-F0-9-]+", fields[0]):
+        root_uuid = fields[0][5:]
+if root_uuid is None:
+    raise SystemExit("No explicit root UUID in fstab")
+kernels = sorted(Path("/boot").glob("vmlinuz-*-generic"), key=lambda p: [int(x) for x in re.findall(r"\d+", p.name)])
+if not kernels:
+    raise SystemExit("No Ubuntu generic kernel")
+kernel = kernels[-1].name
+initrd = kernel.replace("vmlinuz-", "initrd.img-", 1)
+if not Path("/boot", initrd).is_file():
+    raise SystemExit("Kernel initramfs is missing")
+shim = Path("/usr/lib/shim/shimx64.efi.signed.latest")
+if not shim.exists():
+    shim = Path("/usr/lib/shim/shimx64.efi.signed")
+grub = Path("/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed")
+mm = Path("/usr/lib/shim/mmx64.efi")
+if not all(p.is_file() for p in (shim, grub, mm)):
+    raise SystemExit("Signed Ubuntu EFI package files are missing")
+for folder in (Path("/boot/efi/EFI/BOOT"), Path("/boot/efi/EFI/ubuntu")):
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(shim, folder / ("BOOTX64.EFI" if folder.name == "BOOT" else "shimx64.efi"))
+    shutil.copyfile(grub, folder / "grubx64.efi")
+    shutil.copyfile(mm, folder / "mmx64.efi")
+    (folder / "grub.cfg").write_text(f"search --no-floppy --fs-uuid --set=root {root_uuid}\nset prefix=($root)/boot/grub\nconfigfile $prefix/grub.cfg\n")
+grubdir = Path("/boot/grub")
+grubdir.mkdir(exist_ok=True)
+# Random unrecoverable password disables interactive GRUB editing/console.
+# This is not a Secure Boot key and does not modify a signed binary.
+import hashlib
+salt = os.urandom(64)
+derived = hashlib.pbkdf2_hmac("sha512", os.urandom(64), salt, 10000)
+password = "grub.pbkdf2.sha512.10000." + salt.hex().upper() + "." + derived.hex().upper()
+(grubdir / "grub.cfg").write_text(
+    'set default=0\nset timeout=0\nset timeout_style=hidden\n'
+    'set superusers="locked"\npassword_pbkdf2 locked ' + password + '\n'
+    'menuentry "4TW-OS Release" --unrestricted {\n'
+    f'    search --no-floppy --fs-uuid --set=root {root_uuid}\n'
+    f'    linux /boot/{kernel} root=UUID={root_uuid} ro quiet splash panic=10\n'
+    f'    initrd /boot/{initrd}\n'
+    '}\n'
+)
+print("Refreshed signed removable EFI chain and GRUB configuration; no NVRAM changes.")

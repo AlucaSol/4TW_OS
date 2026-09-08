@@ -1,0 +1,4 @@
+NAME=4TW-OS
+MODEL=Release
+BASE=Ubuntu-26.04
+ARCH=amd64

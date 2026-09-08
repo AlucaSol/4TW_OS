@@ -1,0 +1,28 @@
+[Unit]
+Description=Resolve the 4TW-OS timezone once from the public IP
+After=4tw-configure.service NetworkManager.service chrony.service
+Wants=chrony.service
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/nm-online -q --timeout=0
+ExecStart=/usr/local/libexec/4tw-timezone-auto
+TimeoutStartSec=10
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/4tw /var/lib/4tw
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectClock=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

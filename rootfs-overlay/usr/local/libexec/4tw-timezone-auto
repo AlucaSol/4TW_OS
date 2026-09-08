@@ -1,0 +1,24 @@
+#!/usr/bin/python3 -I
+import subprocess
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import automatic_timezone_once
+from timezone_provider import lookup_timezone
+
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+
+# Give the already-running chrony daemon a short background opportunity to
+# establish UTC. Failure is harmless and must not block the kiosk.
+try:
+    subprocess.run(
+        ["/usr/bin/chronyc", "waitsync", "3", "1", "100", "1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=3.5,
+        check=False,
+    )
+except (OSError, subprocess.TimeoutExpired):
+    pass
+result = automatic_timezone_once(lookup_timezone)
+print("4TW-OS automatic timezone: " + result, flush=True)

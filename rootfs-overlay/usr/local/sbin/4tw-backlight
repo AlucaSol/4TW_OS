@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -I
+import sys
+import time
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import set_backlight
+if len(sys.argv) != 2 or sys.argv[1] not in {"up", "down", "default"}:
+    raise SystemExit(2)
+for attempt in range(15 if sys.argv[1] == "default" else 1):
+    value = set_backlight(sys.argv[1])
+    if value is not None:
+        print(value)
+        raise SystemExit(0)
+    if sys.argv[1] == "default":
+        time.sleep(1)
+raise SystemExit(1)

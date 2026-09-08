@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=4TW-OS
+Description=Original 4TW-OS logo, centred without distortion
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/4tw
+ScriptFile=/usr/share/plymouth/themes/4tw/4tw.script

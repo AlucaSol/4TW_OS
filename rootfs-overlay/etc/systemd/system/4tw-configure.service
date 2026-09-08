@@ -1,0 +1,15 @@
+[Unit]
+Description=Read USB configuration and attempt Wi-Fi directly
+Wants=NetworkManager.service
+After=NetworkManager.service config.mount
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/4tw-configure
+TimeoutStartSec=35
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+{
+  "name": "ipapi.co",
+  "endpoint": "https://ipapi.co/timezone/",
+  "response": "iana-text",
+  "timeout_seconds": 4
+}

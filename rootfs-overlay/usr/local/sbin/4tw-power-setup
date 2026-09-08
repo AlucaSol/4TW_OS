@@ -1,0 +1,8 @@
+#!/usr/bin/python3 -I
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import apply_power_policy
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+result = apply_power_policy()
+print("4TW-OS power policy: " + " ".join(f"{key}={value}" for key, value in sorted(result.items())))
