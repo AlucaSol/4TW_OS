@@ -1,6 +1,7 @@
 # 4TW-OS — Ubuntu/Sway Release
 
-This is a separate implementation. The existing `../bcld/` prototype is unchanged.
+This Ubuntu/Sway implementation is self-contained. Building it does not require
+an earlier BCLD checkout, a sibling repository, or files outside this repository.
 
 Ubuntu 26.04 amd64 → Microsoft-signed Ubuntu shim → Canonical-signed GRUB and kernel → a two-choice appliance menu → systemd → automatic kiosk login → Sway → either one Firefox kiosk at `https://4thewords.com/` or one fullscreen Offline Typewriter.
 
@@ -8,42 +9,66 @@ Firefox uses Mozilla's official APT repository, not Snap or a third-party browse
 
 ## Build from Windows 11
 
-Use **PowerShell**. You do not need to open an Ubuntu desktop. These commands call the already installed `Ubuntu-26.04` WSL2 distribution directly.
+Use **PowerShell** opened in this repository's root (the directory containing
+this README, `build/` and `assets/`). You do not need to open an Ubuntu desktop.
+These commands call the installed `Ubuntu-26.04` WSL2 distribution directly.
+The commands derive the Linux form of the current repository path, so the
+checkout may have any name and paths containing spaces remain supported.
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\jonbe\Documents\AI projects\4TW-OS'
 wsl.exe -l -v
+$repoWindows = (Get-Location).Path
+$repoWsl = (wsl.exe -d Ubuntu-26.04 -- wslpath -a -u $repoWindows).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $repoWsl) { throw 'Could not resolve the repository path in WSL' }
 
-wsl.exe -d Ubuntu-26.04 -u root --cd '/mnt/c/Users/jonbe/Documents/AI projects/4TW-OS' -- bash ubuntu-sway/build/run-wsl.sh packages
+wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh packages
 if ($LASTEXITCODE -ne 0) { throw 'Package preparation failed' }
 
-wsl.exe -d Ubuntu-26.04 -u root --cd '/mnt/c/Users/jonbe/Documents/AI projects/4TW-OS' -- bash ubuntu-sway/build/run-wsl.sh configure
+wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh configure
 if ($LASTEXITCODE -ne 0) { throw 'Configuration/tests failed' }
 
-wsl.exe -d Ubuntu-26.04 -u root --cd '/mnt/c/Users/jonbe/Documents/AI projects/4TW-OS' -- bash ubuntu-sway/build/run-wsl.sh image
+wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh image
 if ($LASTEXITCODE -ne 0) { throw 'Image creation failed' }
 
-# Make one normal Windows copy; sparse rsync transfers across WSL/NTFS are slow.
-Copy-Item -LiteralPath '\\wsl.localhost\Ubuntu-26.04\home\jonbe\4tw-ubuntu-sway-build\artifacts\4TW-OS_RELEASE.img' -Destination '.\ubuntu-sway\artifacts\4TW-OS_RELEASE.img' -ErrorAction Stop
-
-wsl.exe -d Ubuntu-26.04 -u root --cd '/mnt/c/Users/jonbe/Documents/AI projects/4TW-OS' -- bash ubuntu-sway/build/run-wsl.sh verify
+wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh verify
 if ($LASTEXITCODE -ne 0) { throw 'Image verification failed' }
+
+# Make one normal Windows copy after verification; sparse rsync transfers are slow.
+$nativeBuild = (wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- python3 build/resolve-native-build.py).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $nativeBuild) { throw 'Could not resolve the native build directory' }
+$nativeImageLinux = "$nativeBuild/artifacts/4TW-OS_RELEASE.img"
+$nativeImageWindows = (wsl.exe -d Ubuntu-26.04 -- wslpath -w $nativeImageLinux).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $nativeImageWindows) { throw 'Could not resolve the IMG path for Windows' }
+Copy-Item -LiteralPath $nativeImageWindows -Destination '.\artifacts\4TW-OS_RELEASE.img' -ErrorAction Stop
 ```
 
 Stop if any stage fails; do not continue to the next command. WSL's unrelated `Failed to translate D:\Program Files\ytdlp` PATH warning does not indicate a build failure.
 
-The wrapper copies source, including `assets/4TW-OS.png`, into the native Linux build directory:
+All build stages require WSL root because they create device nodes, chroot
+mounts, filesystems and loop devices. `run-wsl.sh` determines the non-root WSL
+account from `FOURTW_WSL_USER`, `SUDO_USER`, `/etc/wsl.conf`, or one unambiguous
+normal login account, in that order. It rejects root, missing homes and homes on
+`/mnt`. If the host has several eligible WSL users and no default, explicitly
+pass `FOURTW_WSL_USER` through `env` rather than editing source.
+
+The wrapper copies source, including the required project-local
+`assets/4TW-OS.png`, into:
 
 ```text
-/home/jonbe/4tw-ubuntu-sway-build/
+<selected WSL user's home>/4tw-ubuntu-sway-build/
 ```
 
-Builds run there, not on NTFS. The existing WSL tools are debootstrap, APT, Python 3, rsync, curl, GnuPG, GPT/loop/mount tools, FAT/ext4 tools and sbsigntool. No Docker, new Codex plugin, custom signing key, or Ubuntu GUI is needed. Internet access is needed for current signed indexes and packages missing from cache.
+Builds run there, not on NTFS. A missing or externally linked logo fails before
+source synchronization. The existing WSL tools are debootstrap, APT, Python 3,
+rsync, curl, GnuPG, GPT/loop/mount tools, FAT/ext4 tools and sbsigntool. No
+Docker, new Codex plugin, custom signing key, or Ubuntu GUI is needed. Internet
+access is needed for current signed indexes and packages missing from cache.
 
-Successful stages copy logs/checksums back automatically; the explicit `Copy-Item` command exports the IMG to:
+Successful stages copy logs/checksums back automatically; the explicit
+`Copy-Item` command exports the IMG to the checkout's own:
 
 ```text
-C:\Users\jonbe\Documents\AI projects\4TW-OS\ubuntu-sway\artifacts\
+artifacts\
     4TW-OS_RELEASE.img
     4TW-OS_RELEASE.img.sha256
     packages.tsv
@@ -59,15 +84,25 @@ Optional VM test tools were installed on the WSL host only. For another build ho
 
 ## Cache
 
-The separate native cache is `.build-cache/apt/archives/`. Initial preparation copies compatible candidates from `/home/jonbe/bcld-4thewords-build/.build-cache/apt/archives/` without changing the old cache. APT/debootstrap still check signed Ubuntu/Mozilla indexes and package hashes; stale versions are not forced. The cache is bind-mounted only during package work, then unmounted and excluded from the image and Git.
+The primary cache is
+`<native build directory>/.build-cache/apt/archives/`. It is build-time only,
+ignored by Git, excluded from the IMG, automatically recreated and safe to
+delete when a clean download is desired. APT/debootstrap still check signed
+Ubuntu/Mozilla indexes and package hashes; stale versions are not forced. The
+cache is bind-mounted only during package work, then unmounted.
+
+A previous cache is optional. To seed from one, set `FOURTW_OLD_APT_CACHE` to
+its absolute native-Linux `apt/archives` directory for the `packages` command.
+Only missing `.deb` files are copied; the source cache is never changed. An
+unset or missing optional cache is the normal fresh-clone case and is silent.
 
 ## Flash and configure
 
 1. Verify the Windows file hash:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 -LiteralPath '.\ubuntu-sway\artifacts\4TW-OS_RELEASE.img'
-   Get-Content -LiteralPath '.\ubuntu-sway\artifacts\4TW-OS_RELEASE.img.sha256'
+   Get-FileHash -Algorithm SHA256 -LiteralPath '.\artifacts\4TW-OS_RELEASE.img'
+   Get-Content -LiteralPath '.\artifacts\4TW-OS_RELEASE.img.sha256'
    ```
 
 2. Use Rufus or another raw-disk-image writer. Select **only the intended 32 GB SanDisk**, select this `.img`, and use raw/DD writing if asked. Flashing erases that USB. Do not select the internal SSD.
@@ -137,6 +172,12 @@ For Ubuntu/Firefox updates, back up anything important and rebuild using the sam
 
 ## Verification
 
-See `docs/BUILD-NOTES.md`, `docs/VERIFICATION.md`, `docs/DUAL-MODE.md`, `docs/POWER-OPTIMISATION.md`, `docs/TIMEZONE.md`, and the actual artifact logs. Static verification mounts the final IMG read-only, checks all partitions/files/signatures/configuration, write-tests copies of both FAT data partitions, and rechecks SHA-256 afterwards. Build-only Firefox and FocusWriter tests use temporary state that is not shipped. Physical Acer checks are explicitly separate.
+See `docs/BUILD-NOTES.md`, `docs/VERIFICATION.md`, `docs/DUAL-MODE.md`,
+`docs/POWER-OPTIMISATION.md`, `docs/TIMEZONE.md`, `docs/PORTABILITY.md`, and
+the actual artifact logs. Static verification mounts the final IMG read-only,
+checks all partitions/files/signatures/configuration, write-tests copies of
+both FAT data partitions, and rechecks SHA-256 afterwards. Build-only Firefox
+and FocusWriter tests use temporary state that is not shipped. Physical Acer
+checks are explicitly separate.
 
 Implementation references: [Ubuntu Secure Boot](https://documentation.ubuntu.com/security/docs/security-features/platform-protections/secure-boot/), [Mozilla official Linux packages](https://support.mozilla.org/en-US/kb/install-firefox-linux), [Firefox kiosk mode](https://support.mozilla.org/en-US/kb/firefox-enterprise-kiosk-mode), [WebsiteFilter](https://firefox-admin-docs.mozilla.org/reference/policies/websitefilter/), [Firefox policies](https://mozilla.github.io/policy-templates/), [Sway configuration](https://manpages.ubuntu.com/manpages/resolute/man5/sway.5.html), [Mako overlay configuration](https://manpages.ubuntu.com/manpages/resolute/man5/mako.5.html).

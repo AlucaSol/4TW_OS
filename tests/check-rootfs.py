@@ -68,8 +68,10 @@ for label, command in (("Retry Wi-Fi", "/usr/local/sbin/4tw-retry-wifi"),
                        ("Offline Typewriter", "/usr/local/libexec/4tw-switch-offline"),
                        ("Shut Down", "/usr/local/sbin/4tw-poweroff")):
     check(label in online and command in online, "fixed Wi-Fi failure action exists: " + label)
-check("--button-dismiss-no-terminal" in online and "/usr/bin/swaynag" in online and "input" not in online,
-      "Wi-Fi failure UI is a non-terminal fixed-purpose swaynag")
+check("--button-no-terminal" in online and "subprocess.Popen" in online and
+      'status == "connected"' in online and "prompt.terminate()" in online and
+      "/usr/bin/swaynag" in online and "input" not in online,
+      "Wi-Fi failure UI remains visible for asynchronous fixed actions and closes on success")
 typewriter = read("/usr/local/libexec/4tw-typewriter")
 typewriter_tree = ast.parse(typewriter)
 focuswriter_launches = [node for node in ast.walk(typewriter_tree) if isinstance(node, ast.List) and node.elts and

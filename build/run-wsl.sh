@@ -1,7 +1,8 @@
 #!/bin/bash
 set -Eeuo pipefail
 SOURCE=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
-NATIVE=/home/jonbe/4tw-ubuntu-sway-build
+[[ $EUID == 0 ]] || { echo 'Run this wrapper as WSL root.' >&2; exit 1; }
+NATIVE=$(python3 "$SOURCE/build/resolve-native-build.py")
 case "${1:-}" in
     packages) stage=prepare-packages ;;
     configure) stage=configure-rootfs ;;
@@ -11,12 +12,12 @@ case "${1:-}" in
     boot-test) stage=boot-test ;;
     notifications) stage=test-notifications ;;
     fix-timeout) stage=fix-config-timeout ;;
-    *) echo 'Usage: run-wsl.sh packages|configure|image|verify|vm-tools|boot-test' >&2; exit 2 ;;
+    fix-wifi-retry) stage=fix-wifi-retry ;;
+    *) echo 'Usage: run-wsl.sh packages|configure|image|verify|vm-tools|boot-test|notifications|fix-timeout|fix-wifi-retry' >&2; exit 2 ;;
 esac
-mkdir -p "$NATIVE/artifacts" "$NATIVE/assets"
-rsync -rt --exclude=.work --exclude=.build-cache --exclude=artifacts --exclude=__pycache__ "$SOURCE/" "$NATIVE/"
-install -m 644 "$SOURCE/assets/4TW-OS.png" "$NATIVE/assets/4TW-OS.png"
-export FOURTW_WINDOWS_SOURCE="$SOURCE"
+source "$SOURCE/build/source-copy.sh"
+sync_4tw_source "$SOURCE" "$NATIVE"
+echo "Native build directory: $NATIVE"
 bash "$NATIVE/build/$stage.sh" 2>&1 | tee -a "$NATIVE/artifacts/$stage.log"
 mkdir -p "$SOURCE/artifacts"
 # Large IMG export is a separate Windows Copy-Item operation (see README).

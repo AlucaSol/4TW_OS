@@ -55,6 +55,7 @@ inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/
 python3 "$PROJECT/tests/test_helpers.py"
 python3 "$PROJECT/tests/test_timezone.py"
 python3 "$PROJECT/tests/test_dual_mode.py"
+python3 "$PROJECT/tests/test_build_portability.py"
 python3 "$PROJECT/tests/check-rootfs.py" "$ROOTFS" "$PROJECT"
 install -d -m 700 -o 1000 -g 1000 "$ROOTFS/run/4tw-sway-test"
 for config in sway.conf sway-online.conf sway-offline.conf; do

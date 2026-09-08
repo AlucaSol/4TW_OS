@@ -1,15 +1,12 @@
 #!/bin/bash
 set -Eeuo pipefail
 source "$(dirname -- "$0")/common.sh"
+source "$(dirname -- "$0")/cache-seed.sh"
 exec 9>"$WORK/build.lock"
 flock -n 9 || { echo 'Another build is running.' >&2; exit 1; }
-rm -f "$WORK/configured.ok"
+rm -f "$WORK/packages.ok" "$WORK/configured.ok"
 trap unmount_chroot EXIT
-OLD_CACHE=/home/jonbe/bcld-4thewords-build/.build-cache/apt/archives
-if [[ -d "$OLD_CACHE" ]]; then
-    # Copy, never alter or mount the old BCLD cache writable.
-    rsync -a --ignore-existing --include='*.deb' --exclude='*' "$OLD_CACHE/" "$CACHE/"
-fi
+seed_optional_apt_cache "$CACHE"
 echo "Seeded cache: $(find "$CACHE" -maxdepth 1 -name '*.deb' | wc -l) packages"
 if [[ ! -f "$WORK/bootstrap.ok" ]]; then
     [[ ! -e "$ROOTFS/etc/os-release" ]] || {
