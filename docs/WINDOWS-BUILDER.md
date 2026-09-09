@@ -94,6 +94,12 @@ and log, and preserves the package cache and safe intermediate state. Correct
 the reported issue and normally rerun `BUILD-4TW-OS.cmd`; it never opens an
 interactive troubleshooting shell.
 
+Some WSL installations print unrelated Windows-PATH translation diagnostics
+while successfully returning a Linux or Windows path. The launcher validates
+and extracts exactly one path of the expected kind, so diagnostic text cannot
+become part of `wsl --cd` or an artifact filename. Missing or ambiguous path
+output still fails closed.
+
 ## Final manual step
 
 The launcher deliberately never flashes disks. After **4TW-OS BUILD COMPLETE**,

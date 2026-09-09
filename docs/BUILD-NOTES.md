@@ -34,13 +34,14 @@ SHA-256: b8b1a10766bc71166f9299f68680c08e980d8ba302ce8390518d3f4e19db9a53
 ```
 
 Windows PowerShell 5.1 parsed all launcher/module/test files. The mockable
-launcher suite passed 20 checks covering spaces, ZIP use without Git, WSL and
+launcher suite passed 23 checks covering spaces, ZIP use without Git, WSL and
 Ubuntu states (including localized status text), restart/resume, first-run
-setup, stage failure, disk space, Downloads resolution, source/copy checksums,
-bounded prior-output retention, `.partial` failure safety, and path-identity
-regression. The existing 14-test portability suite passed. All modified shell
-scripts passed `bash -n` and warning-level Shellcheck. PSScriptAnalyzer was not
-installed and was not added solely for this task.
+setup, unrelated WSL diagnostic isolation, ambiguous-path rejection, stage
+failure, disk space, Downloads resolution, source/copy checksums, bounded
+prior-output retention, `.partial` failure safety, and path-identity regression.
+The existing 14-test portability suite passed. All modified shell scripts passed
+`bash -n` and warning-level Shellcheck. PSScriptAnalyzer was not installed and
+was not added solely for this task.
 
 ## Environment and stages
 

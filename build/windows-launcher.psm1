@@ -7,6 +7,24 @@ function Remove-4twWslFormatting {
     return (($Text -replace "`0", '') -replace ($escape + '\[[0-9;?]*[ -/]*[@-~]'), '')
 }
 
+function Get-4twPathFromWslOutput {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [ValidateSet('Unix', 'Windows')][string]$Kind
+    )
+    $pattern = if ($Kind -eq 'Unix') { '^/' } else { '^(?:[A-Za-z]:\\|\\\\)' }
+    $candidates = @(
+        foreach ($line in (Remove-4twWslFormatting $Text) -split "`r?`n") {
+            $value = $line.Trim()
+            if ($value -match $pattern) { $value }
+        }
+    )
+    if ($candidates.Count -ne 1) {
+        throw "WSL did not return exactly one valid $Kind path."
+    }
+    return $candidates[0]
+}
+
 function ConvertFrom-4twWslList {
     param([AllowEmptyString()][string]$Text)
     $items = @()
@@ -133,8 +151,11 @@ function Export-4twVerifiedOutput {
     $partialImage = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.partial'
     $destinationChecksum = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.sha256'
     $destinationReport = Join-Path $OutputDirectory 'VERIFICATION.txt'
+    $destinationVerified = $false
     if (Test-Path -LiteralPath $destinationImage -PathType Leaf) {
-        if (-not (Test-4twChecksumMatch $destinationImage $expected)) {
+        if (Test-4twChecksumMatch $destinationImage $expected) {
+            $destinationVerified = $true
+        } else {
             $previous = Join-Path $OutputDirectory 'previous'
             [IO.Directory]::CreateDirectory($previous) | Out-Null
             Get-ChildItem -LiteralPath $previous -File -ErrorAction SilentlyContinue |
@@ -160,8 +181,9 @@ function Export-4twVerifiedOutput {
             throw 'The copied Windows IMG differs from the verified WSL checksum and remains unpublished as a .partial file.'
         }
         Move-Item -LiteralPath $partialImage -Destination $destinationImage
+        $destinationVerified = $true
     }
-    if (-not (Test-4twChecksumMatch $destinationImage $expected)) {
+    if (-not $destinationVerified) {
         throw 'The Windows IMG checksum differs from the verified WSL artifact.'
     }
     [IO.File]::WriteAllText($destinationChecksum, "$expected  4TW-OS_RELEASE.img`r`n",

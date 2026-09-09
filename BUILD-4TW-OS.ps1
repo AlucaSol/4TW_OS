@@ -48,8 +48,14 @@ function Invoke-4twCapture {
 
 function Invoke-4twLive {
     param([Parameter(Mandatory)][string]$FilePath, [string[]]$Arguments = @())
-    & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host "$_" }
-    $code = $LASTEXITCODE
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host "$_" }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldPreference
+    }
     return [int]$code
 }
 
@@ -215,10 +221,11 @@ try {
 
     $repoPath = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--',
         'wslpath', '-a', '-u', $RepositoryRoot)
-    if ($repoPath.ExitCode -ne 0 -or -not $repoPath.Text.Trim()) {
+    if ($repoPath.ExitCode -ne 0) {
         throw 'Could not translate this repository path into Ubuntu.'
     }
-    $repoWsl = $repoPath.Text.Trim()
+    try { $repoWsl = Get-4twPathFromWslOutput $repoPath.Text Unix }
+    catch { throw 'Could not isolate the translated repository path from WSL diagnostics.' }
     $initialization = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
         '--', 'bash', 'build/check-wsl-initialized.sh')
     $initializationAction = Get-4twUbuntuInitializationAction $initialization.ExitCode
@@ -257,10 +264,11 @@ try {
 
     $nativeResult = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
         '--', 'python3', 'build/resolve-native-build.py')
-    if ($nativeResult.ExitCode -ne 0 -or -not $nativeResult.Text.Trim()) {
+    if ($nativeResult.ExitCode -ne 0) {
         throw ("The portable WSL build-user resolver stopped: " + $nativeResult.Text.Trim())
     }
-    $nativeBuild = $nativeResult.Text.Trim()
+    try { $nativeBuild = Get-4twPathFromWslOutput $nativeResult.Text Unix }
+    catch { throw 'The portable WSL build-user resolver did not return one safe native path.' }
     $buildStatus = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
         '--', 'bash', 'build/run-wsl.sh', 'status')
     if ($buildStatus.ExitCode -eq 20) { throw $buildStatus.Text.Trim() }
@@ -293,8 +301,12 @@ try {
     if ($imagePath.ExitCode -ne 0 -or $checksumPath.ExitCode -ne 0) {
         throw 'The verified native output could not be exposed to Windows.'
     }
+    try {
+        $imageWindows = Get-4twPathFromWslOutput $imagePath.Text Windows
+        $checksumWindows = Get-4twPathFromWslOutput $checksumPath.Text Windows
+    } catch { throw 'Could not isolate the verified Windows output paths from WSL diagnostics.' }
     Write-Host 'Copying the verified IMG to Windows once, then hashing it. This can take several minutes...'
-    $export = Export-4twVerifiedOutput ($imagePath.Text.Trim()) ($checksumPath.Text.Trim()) $outputDirectory
+    $export = Export-4twVerifiedOutput $imageWindows $checksumWindows $outputDirectory
     if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
 
     Write-4twBanner @(

@@ -29,6 +29,16 @@ try {
     Assert-Launcher ((Get-4twWindowsSetupOutcome InstallWsl 3010) -eq 'RestartRequired') 'restart-required setup result pauses safely'
     Assert-Launcher ((Get-4twWindowsSetupOutcome InstallWsl 0 $true) -eq 'Ready') 'ready-after-install result avoids an unnecessary restart'
 
+    $warningOutput = "wsl: Failed to translate 'D:\Program Files\example'`n/mnt/c/Source folder with spaces"
+    Assert-Launcher ((Get-4twPathFromWslOutput $warningOutput Unix) -eq '/mnt/c/Source folder with spaces') `
+        'unrelated WSL PATH warnings cannot contaminate a translated Unix path'
+    $uncOutput = "wsl: diagnostic text`n\\wsl.localhost\Ubuntu-26.04\home\builder\image.img"
+    Assert-Launcher ((Get-4twPathFromWslOutput $uncOutput Windows) -like '\\wsl.localhost\*') `
+        'unrelated WSL diagnostics cannot contaminate a translated Windows path'
+    $ambiguousPathStopped = $false
+    try { Get-4twPathFromWslOutput "/one`n/two" Unix | Out-Null } catch { $ambiguousPathStopped = $true }
+    Assert-Launcher $ambiguousPathStopped 'ambiguous WSL path output fails closed'
+
     $wslList = "  NAME             STATE           VERSION`n* Ubuntu-26.04     Stopped         2`n  Debian           Running         2"
     $parsed = @(ConvertFrom-4twWslList $wslList)
     Assert-Launcher (($parsed | Where-Object Name -eq 'Ubuntu-26.04').Version -eq 2) 'Ubuntu-present WSL2 path is parsed'
