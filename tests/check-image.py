@@ -46,8 +46,8 @@ for line in grub.splitlines():
         check((root / line.split()[1].lstrip("/")).is_file(), "GRUB kernel/initramfs target exists")
 check(not list((root / "var/cache/apt/archives").glob("*.deb")), "package-download cache excluded from final IMG")
 check(not (root / ".build-cache").exists() and not (root / "usr/sbin/policy-rc.d").exists(), "no build cache or service-start blocker shipped")
-adjtime = [line.strip() for line in (root / "etc/adjtime").read_text().splitlines() if line.strip()]
-check(adjtime[-1] == "UTC" and "LOCAL" not in adjtime, "final IMG keeps the hardware RTC in UTC")
+check(not (root / "etc/adjtime").exists(),
+      "final IMG has no persistent local-RTC or Linux RTC-maintenance state")
 check((root / "etc/timezone").read_text().strip() == "Etc/UTC", "final IMG has a safe UTC timezone fallback")
 check((root / "etc/localtime").is_symlink() and (root / "etc/localtime").readlink() == Path("/usr/share/zoneinfo/Etc/UTC"),
       "final IMG starts with the Etc/UTC zoneinfo link")

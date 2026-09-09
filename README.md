@@ -135,9 +135,9 @@ FocusWriter defaults to UTF-8 `.txt` files and `/writing/Drafts`. The most recen
 
 ## Clock and travel
 
-The laptop hardware clock is always treated as UTC. Chrony keeps network time enabled and uses normal `rtcsync`; the displayed timezone is separate. In `timezone=auto`, 4TW-OS immediately applies the last successful IANA timezone (or `Etc/UTC` on a fresh image), starts the kiosk normally, and makes at most one four-second request per boot to `https://ipapi.co/timezone/` after connectivity exists. Only the returned timezone name is used and persisted. A valid manual `timezone=` value suppresses that online request entirely. VPNs and proxies can make public-IP location inaccurate. See `docs/TIMEZONE.md` for privacy, failure behaviour, Windows coexistence and the physical test checklist.
+Windows owns the laptop RTC and keeps normal Windows local wall-clock semantics. 4TW-OS reads its date/time fields once at boot, after selecting the manual or last-known IANA timezone, and uses them only to initialise the Linux system clock. Chrony then corrects the Online Linux system clock from network time. RTC synchronisation directives, Chrony's RTC device access and hardware-clock save units are disabled; `/etc/adjtime` is deliberately absent. 4TW-OS never writes the physical RTC.
 
-Windows must separately be configured once to interpret the RTC as UTC using the `RealTimeIsUniversal` DWORD described in that document. 4TW-OS does not mount or alter Windows, its registry, EFI partition, BitLocker, TPM, Secure Boot settings or the internal SSD.
+In `timezone=auto`, 4TW-OS uses the last successful IANA timezone (or `Etc/UTC` on a fresh image) immediately and makes at most one four-second request per boot to `https://ipapi.co/timezone/` after connectivity exists. A validated manual `timezone=` value suppresses that request. VPNs and proxies can make public-IP location inaccurate. Windows must **not** retain the previously suggested `RealTimeIsUniversal=1`; remove that value manually and leave Windows automatic time enabled. See `docs/TIMEZONE.md` for the implementation, Offline/travel edge cases and deferred physical checklist. 4TW-OS does not mount or alter Windows, its registry, EFI partition, BitLocker, TPM, Secure Boot settings or internal SSD.
 
 ## Controls
 

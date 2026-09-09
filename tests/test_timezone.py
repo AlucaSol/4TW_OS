@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -9,6 +10,7 @@ import urllib.error
 
 PROJECT = Path(__file__).resolve().parents[1]
 LIBRARY = PROJECT / "rootfs-overlay/usr/local/lib/4tw"
+sys.path.insert(0, str(LIBRARY))
 
 appliance_spec = importlib.util.spec_from_file_location("appliance", LIBRARY / "appliance.py")
 appliance = importlib.util.module_from_spec(appliance_spec)
@@ -110,20 +112,22 @@ class TimezoneTests(unittest.TestCase):
             })
             self.provider_config.write_text(json.dumps(data))
 
-    def test_timezone_validation_and_fixed_timedatectl_arguments(self):
-        calls = []
-
-        def runner(arguments, **_kwargs):
-            calls.append(arguments)
-            return type("Result", (), {"returncode": 0})()
-
+    def test_timezone_validation_and_direct_zoneinfo_application(self):
         localtime = self.root / "localtime"
-        self.assertTrue(appliance.apply_timezone("Australia/Darwin", self.zoneinfo, localtime, runner))
-        self.assertEqual(calls, [["/usr/bin/timedatectl", "set-timezone", "Australia/Darwin"]])
+        timezone_file = self.root / "timezone"
+        self.assertTrue(appliance.apply_timezone(
+            "Australia/Darwin", self.zoneinfo, localtime, timezone_file))
+        self.assertTrue(localtime.is_symlink())
+        self.assertEqual(localtime.resolve(), (self.zoneinfo / "Australia/Darwin").resolve())
+        self.assertEqual(timezone_file.read_text(), "Australia/Darwin\n")
+        original_stat = localtime.lstat()
+        self.assertTrue(appliance.apply_timezone(
+            "Australia/Darwin", self.zoneinfo, localtime, timezone_file))
+        self.assertEqual(localtime.lstat().st_ino, original_stat.st_ino)
         for value in (None, "auto", "../Etc/UTC", "/etc/passwd", "Australia/Darwin;sh", "right/UTC"):
             self.assertIsNone(appliance.valid_timezone(value, self.zoneinfo))
-        self.assertFalse(appliance.apply_timezone("$(sh)", self.zoneinfo, localtime, runner))
-        self.assertEqual(len(calls), 1)
+        self.assertFalse(appliance.apply_timezone(
+            "$(sh)", self.zoneinfo, localtime, timezone_file))
 
     def test_manual_override_never_calls_provider(self):
         mode = self.root / "mode"

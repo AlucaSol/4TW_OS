@@ -12,6 +12,8 @@ import subprocess
 import time
 from urllib.parse import urlsplit
 
+from rtc_clock import import_local_rtc
+
 DEFAULT_URL = "https://4thewords.com/"
 ZONEINFO = Path("/usr/share/zoneinfo")
 LOCALTIME = Path("/etc/localtime")
@@ -568,23 +570,39 @@ def current_timezone(localtime=LOCALTIME, zoneinfo_root=ZONEINFO):
     return valid_timezone(value, root)
 
 
-def apply_timezone(value, zoneinfo_root=ZONEINFO, localtime=LOCALTIME, runner=subprocess.run):
-    """Apply a validated timezone through timedated; never changes RTC mode."""
+def apply_timezone(value, zoneinfo_root=ZONEINFO, localtime=LOCALTIME, timezone_file=TIMEZONE_FILE):
+    """Apply a validated presentation timezone without invoking clock tools."""
     zone = valid_timezone(value, zoneinfo_root)
     if not zone:
         return False
     if current_timezone(localtime, zoneinfo_root) == zone:
         return True
+    target = zoneinfo_root / zone
+    link_temporary = localtime.with_name("." + localtime.name + ".4tw-new")
+    text_temporary = timezone_file.with_name("." + timezone_file.name + ".4tw-new")
     try:
-        result = runner(
-            ["/usr/bin/timedatectl", "set-timezone", zone],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-            check=False,
-        )
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+        localtime.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        timezone_file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        for temporary in (link_temporary, text_temporary):
+            if os.path.lexists(temporary):
+                temporary.unlink()
+        link_temporary.symlink_to(target)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(text_temporary, flags, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(zone + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(text_temporary, 0o644)
+        os.replace(link_temporary, localtime)
+        os.replace(text_temporary, timezone_file)
+        return current_timezone(localtime, zoneinfo_root) == zone
+    except OSError:
+        for temporary in (link_temporary, text_temporary):
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
         return False
 
 
@@ -733,6 +751,9 @@ def configure_runtime():
     applied_zone, applied = prepare_timezone(timezone)
     if not applied:
         print("4TW-OS: could not apply timezone " + applied_zone + "; continuing kiosk startup.", flush=True)
+    rtc_status = import_local_rtc()
+    if rtc_status != "system-clock-initialized":
+        print("4TW-OS: read-only RTC initialization " + rtc_status + "; continuing startup.", flush=True)
 
     if mode == "offline":
         if not enter_offline():

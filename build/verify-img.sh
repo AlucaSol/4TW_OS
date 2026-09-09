@@ -45,6 +45,7 @@ mount -o ro "${LOOP}p1" "$MOUNT/boot/efi"; VERIFY_MOUNTS+=("$MOUNT/boot/efi")
 mount -o ro "${LOOP}p3" "$MOUNT/config"; VERIFY_MOUNTS+=("$MOUNT/config")
 mount -o ro "${LOOP}p4" "$MOUNT/writing"; VERIFY_MOUNTS+=("$MOUNT/writing")
 python3 "$PROJECT/tests/check-rootfs.py" "$MOUNT" "$PROJECT"
+python3 "$PROJECT/tests/check-rtc-policy.py" "$MOUNT"
 cmp "$PROJECT/config/4tw.cfg" "$MOUNT/config/4tw.cfg"
 cmp "$PROJECT/config/4tw-boot.cfg" "$MOUNT/config/4tw-boot.cfg"
 cmp "$PROJECT/docs/WRITING-README.txt" "$MOUNT/writing/README.txt"

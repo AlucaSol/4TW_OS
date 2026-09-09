@@ -101,7 +101,7 @@ check('NOPASSWD: /usr/local/sbin/4tw-poweroff "", /usr/local/sbin/4tw-backlight 
 for path in ("usr/local/bin/4tw-battery", "usr/local/bin/4tw-brightness", "usr/local/bin/4tw-select-gpu",
              "usr/local/bin/4tw-power-status", "usr/local/sbin/4tw-backlight", "usr/local/sbin/4tw-poweroff",
              "usr/local/sbin/4tw-configure", "usr/local/sbin/4tw-power-setup", "usr/local/lib/4tw/appliance.py",
-             "usr/local/lib/4tw/timezone_provider.py", "usr/local/libexec/4tw-timezone-auto",
+             "usr/local/lib/4tw/rtc_clock.py", "usr/local/lib/4tw/timezone_provider.py", "usr/local/libexec/4tw-timezone-auto",
              "usr/local/libexec/4tw-online", "usr/local/libexec/4tw-switch-offline", "usr/local/libexec/4tw-typewriter",
              "usr/local/sbin/4tw-retry-wifi", "usr/local/sbin/4tw-enter-offline",
              "etc/4tw/timezone-provider.json", "etc/NetworkManager/dispatcher.d/50-4tw-timezone",
@@ -116,15 +116,27 @@ check("TimeoutStartSec=35" in read("/etc/systemd/system/4tw-configure.service"),
 check("Wants=NetworkManager.service" not in read("/etc/systemd/system/4tw-configure.service"),
       "Offline configuration does not acquire a NetworkManager dependency")
 check("source " not in read("/usr/local/sbin/4tw-configure") and "shell=True" not in read("/usr/local/lib/4tw/appliance.py"), "config parser never sources shell code")
-adjtime = [line.strip() for line in read("/etc/adjtime").splitlines() if line.strip()]
-check(adjtime[-1] == "UTC" and "LOCAL" not in adjtime, "hardware RTC is explicitly interpreted as UTC")
+check(not (root / "etc/adjtime").exists(),
+      "no persistent local-RTC or Linux RTC-maintenance state is installed")
 check(read("/etc/timezone").strip() == "Etc/UTC", "fresh-install timezone fallback is Etc/UTC")
 check((root / "etc/localtime").is_symlink() and (root / "etc/localtime").readlink() == Path("/usr/share/zoneinfo/Etc/UTC"),
       "fresh-install localtime uses the UTC zoneinfo entry")
 chrony = read("/etc/chrony/chrony.conf")
-check(any(line.strip() == "rtcsync" for line in chrony.splitlines()), "chrony retains normal UTC RTC synchronization")
+chrony_active = [line.split("#", 1)[0].strip() for line in chrony.splitlines()
+                  if line.split("#", 1)[0].strip()]
+check(not any(line.split(None, 1)[0] in {"rtcsync", "rtcfile", "rtcautotrim"}
+              for line in chrony_active), "chrony has no active physical-RTC directive")
+check(any(line.split(None, 1)[0] == "makestep" for line in chrony_active),
+      "chrony retains Linux system-clock stepping")
 check((root / "etc/systemd/system/multi-user.target.wants/chrony.service").is_symlink(),
       "chrony network-time synchronization is enabled")
+chrony_no_rtc = read("/etc/systemd/system/chrony.service.d/4tw-no-rtc.conf")
+check("DevicePolicy=closed" in chrony_no_rtc and "DeviceAllow=" in chrony_no_rtc,
+      "chronyd cannot open the physical RTC device")
+for rtc_unit in ("hwclock.service", "hwclock-save.service", "systemd-hwclock-save.service"):
+    rtc_unit_path = root / "etc/systemd/system" / rtc_unit
+    check(rtc_unit_path.is_symlink() and rtc_unit_path.readlink() == Path("/dev/null"),
+          rtc_unit + " is masked")
 check((project / "config/4tw.cfg").read_text().splitlines()[-1] == "timezone=auto",
       "writable CONFIG defaults to automatic timezone mode")
 provider_config = json.loads(read("/etc/4tw/timezone-provider.json"))
@@ -136,7 +148,8 @@ check("NoRedirect" in provider_source and "text/plain" in provider_source and "s
       "timezone request rejects redirects and does not weaken TLS")
 timezone_service = read("/etc/systemd/system/4tw-timezone-auto.service")
 check("ExecCondition=/usr/bin/nm-online -q --timeout=0" in timezone_service and
-      "TimeoutStartSec=10" in timezone_service and "ProtectSystem=strict" in timezone_service,
+      "TimeoutStartSec=10" in timezone_service and "ProtectSystem=strict" in timezone_service and
+      "ReadWritePaths=/etc /run/4tw /var/lib/4tw" in timezone_service,
       "automatic timezone lookup is connectivity-gated, bounded and sandboxed")
 check(not (root / "etc/systemd/system/multi-user.target.wants/4tw-timezone-auto.service").exists(),
       "automatic timezone lookup is event-triggered rather than boot-blocking")
@@ -150,13 +163,17 @@ runtime_timezone_files = "\n".join(read(path) for path in (
     "/usr/local/lib/4tw/appliance.py", "/usr/local/lib/4tw/timezone_provider.py",
     "/usr/local/libexec/4tw-timezone-auto", "/etc/systemd/system/4tw-timezone-auto.service",
     "/etc/NetworkManager/dispatcher.d/50-4tw-timezone"))
-check("set-local-rtc 1" not in runtime_timezone_files and "Australia/Adelaide" not in runtime_timezone_files,
-      "runtime has no local-RTC command or hard-coded Australian timezone")
+check("timedatectl" not in runtime_timezone_files and "Australia/Adelaide" not in runtime_timezone_files,
+      "runtime timezone changes use zoneinfo files, with no clock command or hard-coded Australian zone")
 check("layer=overlay" in read("/etc/4tw/mako.conf") and "default-timeout=5000" in read("/etc/4tw/mako.conf"), "notification sits above fullscreen and automatically expires")
 check((root / "usr/share/plymouth/themes/4tw/4TW-OS.png").read_bytes() == (project / "assets/4TW-OS.png").read_bytes(), "Plymouth logo is byte-identical to existing asset")
 check("Math.Min" in read("/usr/share/plymouth/themes/4tw/4tw.script"), "Plymouth preserves image aspect ratio")
 check("Storage=volatile" in read("/etc/systemd/journald.conf.d/4tw.conf"), "logs kept in RAM")
-check("HandlePowerKey=poweroff" in read("/etc/systemd/logind.conf.d/4tw.conf"), "physical power button requests clean poweroff")
+logind = read("/etc/systemd/logind.conf.d/4tw.conf")
+check("HandlePowerKey=poweroff" in logind, "physical power button requests clean poweroff")
+check("HandleSuspendKey=ignore" in logind and "HandleHibernateKey=ignore" in logind and
+      "HandleLidSwitch=ignore" in logind,
+      "the appliance exposes no normal logind suspend/hibernate path")
 power_service = read("/etc/systemd/system/4tw-power-setup.service")
 check("ExecStart=/usr/local/sbin/4tw-power-setup" in power_service and "TimeoutStartSec=5" in power_service,
       "fixed-purpose power policy runs once with a short timeout")

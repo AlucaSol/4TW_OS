@@ -29,7 +29,9 @@ The source checkout may remain on Windows and may contain spaces. The wrapper
 quotes every source/destination use, copies source to the native directory, and
 copies only non-IMG artifacts back automatically. `.git`, `.work`,
 `.build-cache`, `artifacts`, `prompts` and `__pycache__` are excluded from source
-copying. `.gitattributes` preserves LF endings for Linux build/runtime scripts
+copying and preserved in an existing native build tree, while stale ordinary
+source files are removed so a deleted overlay file cannot survive a later sync.
+`.gitattributes` preserves LF endings for Linux build/runtime scripts
 when Git checks the repository out on Windows; generated Python bytecode is not
 source-controlled.
 The large IMG remains native until the explicit post-verification Windows copy

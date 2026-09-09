@@ -10,7 +10,7 @@ sync_4tw_source() {
         return 1
     }
     mkdir -p "$destination/artifacts" "$destination/assets"
-    rsync -rt --exclude=.git --exclude=.work --exclude=.build-cache --exclude=artifacts --exclude=prompts \
+    rsync -rt --delete --exclude=.git --exclude=.work --exclude=.build-cache --exclude=artifacts --exclude=prompts \
         --exclude=__pycache__ "$source/" "$destination/"
     install -m 644 "$logo" "$destination/assets/4TW-OS.png"
     cmp "$logo" "$destination/assets/4TW-OS.png"

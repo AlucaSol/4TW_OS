@@ -16,7 +16,8 @@ short HTTPS request to ipapi.co after Wi-Fi is available. The public IP is
 necessarily visible to that service. A VPN/proxy can produce the wrong zone.
 Set a validated IANA name such as timezone=Australia/Darwin for a manual
 override; manual mode makes no timezone-provider request. Restore auto after
-travel if you want detection again. The hardware clock always remains UTC.
+travel if you want detection again. Windows owns the laptop hardware clock;
+4TW-OS reads it at boot but never writes or synchronises it.
 
 The separate 4tw-boot.cfg controls only the boot menu's automatic choice:
 

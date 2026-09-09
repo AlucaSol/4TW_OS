@@ -2,10 +2,12 @@
 import base64
 import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
 PROJECT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT / "rootfs-overlay/usr/local/lib/4tw"))
 spec = importlib.util.spec_from_file_location("appliance", PROJECT / "rootfs-overlay/usr/local/lib/4tw/appliance.py")
 appliance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(appliance)

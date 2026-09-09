@@ -1,8 +1,8 @@
-# UTC clock and travel-aware timezone
+# Windows-owned RTC and travel-aware timezone
 
-4TW-OS treats the Acer's hardware RTC as UTC at all times. It does not use a fixed offset or rewrite the RTC as local wall-clock time when travelling. Chrony remains the lightweight Ubuntu network-time client, and its `rtcsync` setting maintains normal Linux UTC RTC semantics. Firefox inherits the system IANA timezone; it has no separate timezone spoofing.
+The Acer's physical hardware clock belongs to Windows and contains Windows local wall-clock time. 4TW-OS may read that clock during startup, but it never updates, trims or synchronises it. While Online is running, Chrony obtains network time and corrects only the Linux system clock. Firefox inherits the selected system IANA timezone; it has no separate timezone spoofing.
 
-## Configuration and startup
+## Startup and timezone selection
 
 The Windows-readable `4TW-CONFIG/4tw.cfg` accepts either:
 
@@ -11,70 +11,90 @@ timezone=auto
 timezone=Australia/Darwin
 ```
 
-`auto` is the default. At boot, `/usr/local/lib/4tw/appliance.py` validates and immediately applies `/var/lib/4tw/timezone`, the last successful automatic result. A new image with no state uses `Etc/UTC`. Firefox and Sway are not ordered after network or location detection.
+`auto` is the default. `/usr/local/lib/4tw/appliance.py` first applies the last successful automatic zone from `/var/lib/4tw/timezone`, or `Etc/UTC` when no state exists. A valid manual IANA name wins and bypasses automatic lookup. Values are accepted only when they resolve to an installed regular file under `/usr/share/zoneinfo`; configuration text is never executed.
 
-When NetworkManager reports connectivity, `4tw-timezone-auto.service` gets a short opportunity for chrony to synchronize and then makes at most one provider request in that boot. A volatile `/run/4tw/timezone-attempted` marker prevents repeat requests. Success is accepted only when the response names an installed file under `/usr/share/zoneinfo`. The system timezone and last-known file change only for a validated result, and the state file is not rewritten when its value is unchanged.
+After that presentation timezone is selected, `/usr/local/lib/4tw/rtc_clock.py` reads only `/sys/class/rtc/rtc*/date` and `/sys/class/rtc/rtc*/time`. It interprets those fields as local wall-clock time in the selected zone and sets only Linux `CLOCK_REALTIME`. It does not open `/dev/rtc`, invoke a hardware-clock utility or expose a system-to-RTC operation. A missing, malformed or implausible RTC value is non-fatal.
 
-A valid manual IANA name is applied directly from installed `tzdata`. It wins over automatic detection, so the provider is never contacted. Invalid or unsafe timezone text cannot become a command or filesystem path and falls back to automatic mode. Change `4tw.cfg` back to `timezone=auto` to resume detection; no IMG rebuild is required.
+Online then proceeds with bounded Wi-Fi startup. When NetworkManager reports connectivity, `4tw-timezone-auto.service` gives Chrony a short opportunity to correct the Linux system clock, then performs at most one automatic timezone request in that boot. A successful changed result updates `/etc/localtime`, `/etc/timezone` and the last-known state; it never changes the Linux system-clock value or the physical RTC merely because the timezone changed.
 
-## Online provider and privacy
+Offline skips NetworkManager, Chrony and online timezone lookup. It still selects manual/last-known/UTC and performs the same read-only RTC import before FocusWriter starts. If the laptop has travelled and boots Offline before 4TW-OS learns the new timezone, local display and converted timestamps can temporarily use the previous zone. A fresh Offline boot with no last-known location falls back to `Etc/UTC`. Around an ambiguous daylight-saving fall-back hour, a local-only RTC cannot distinguish the two occurrences; Online network time corrects that inherent ambiguity.
 
-The replaceable provider definition is `/etc/4tw/timezone-provider.json`; the current endpoint is:
+## No-write controls
+
+- The build removes active `rtcsync`, `rtcfile` and `rtcautotrim` directives from `/etc/chrony/`. Network source and `makestep` policy remain.
+- `/etc/systemd/system/chrony.service.d/4tw-no-rtc.conf` resets Chrony's inherited RTC device allowance while preserving network time.
+- `hwclock.service`, `hwclock-save.service` and `systemd-hwclock-save.service` are explicitly masked under `/etc/systemd/system/`.
+- `/etc/adjtime` is absent. 4TW-OS does not persist systemd/hwclock local-RTC ownership or maintenance state.
+- Timezone changes atomically select an installed zoneinfo file directly; they do not invoke `timedatectl`, `hwclock` or another clock-management command.
+- `tests/check-rtc-policy.py` scans the configured runtime and shutdown paths for active RTC writers on every configure and future IMG verification pass.
+
+These choices also apply to clean poweroff and the existing Ctrl+Alt+Delete and physical-power-button paths. The kiosk has no suspend shortcut, already ignores lid close, and now explicitly ignores logind suspend/hibernate keys; no normal appliance suspend/resume path is configured.
+
+## Automatic provider and privacy
+
+The fixed provider definition remains `/etc/4tw/timezone-provider.json`:
 
 ```text
 https://ipapi.co/timezone/
 ```
 
-This is a single-field HTTPS endpoint inferred from the connection's public IP. The request has no query parameters or body; it sends the normal destination/path and TLS/network metadata plus `Accept: text/plain` and the generic `User-Agent: 4TW-OS-Timezone/1`. The request necessarily reveals that public IP to ipapi.co. 4TW-OS sends no Wi-Fi credentials, account identifier, browser profile, 4thewords data, writing content, GPS coordinates or persistent device identifier. It rejects redirects, JSON/HTML/oversized/multi-line or invalid UTF-8 responses, keeps normal TLS certificate verification, and has a four-second network timeout. Only a validated IANA timezone string is persisted.
+This single-field HTTPS endpoint infers a zone from the connection's public IP. It receives normal network/TLS metadata and a generic `4TW-OS-Timezone/1` user agent, but no Wi-Fi credentials, account identifier, browser profile, 4thewords data, writing content, GPS coordinates or persistent device identifier. Redirects, JSON/HTML, oversized or multi-line responses and invalid UTF-8 fail closed. TLS verification remains enabled and the network timeout is four seconds.
 
-Public-IP location is approximate. A VPN, proxy, mobile carrier gateway, hotel network or remote connection can report the wrong region. Use a manual IANA override in those situations. No GeoClue service, Mozilla Location Service, browser location permission or third-party GPS/Wi-Fi scanning component is installed for this feature.
-
-If connectivity, chrony, the provider, validation or timezone application fails, kiosk startup and shutdown continue, RTC semantics remain UTC, and the previous valid timezone remains in place. The service does not retry in a tight loop.
+Public-IP location can be wrong behind a VPN, proxy, hotel network or carrier gateway. Use a manual IANA override in those cases. No GeoClue, GPS/Wi-Fi-scanning component or Firefox location permission is added. Lookup failure does not block kiosk startup or shutdown, and the service does not retry in a tight loop.
 
 ## Runtime files
 
 | Responsibility | File or setting |
 | --- | --- |
-| UTC RTC policy | `/etc/adjtime` ends in `UTC`; `/etc/localtime` initially links to `Etc/UTC` |
-| Network time | `chrony.service`; `/etc/chrony/chrony.conf` contains `rtcsync` |
-| Config parser and state logic | `/usr/local/lib/4tw/appliance.py` |
-| Online provider module | `/usr/local/lib/4tw/timezone_provider.py` |
-| Provider configuration | `/etc/4tw/timezone-provider.json` |
-| Bounded automatic service | `/etc/systemd/system/4tw-timezone-auto.service` |
-| Connectivity trigger | `/etc/NetworkManager/dispatcher.d/50-4tw-timezone` |
-| Current boot mode/attempt | `/run/4tw/timezone-mode`, `/run/4tw/timezone-attempted` |
+| Boot-time RTC read | `/usr/local/lib/4tw/rtc_clock.py`, invoked by `4tw-configure.service` after timezone selection |
+| RTC maintenance state | `/etc/adjtime` deliberately absent |
+| Chrony network sync | enabled `chrony.service`; `/etc/chrony/chrony.conf` retains network sources and `makestep` but no active RTC directive |
+| Chrony RTC-device denial | `/etc/systemd/system/chrony.service.d/4tw-no-rtc.conf` |
+| RTC-save masks | `/etc/systemd/system/{hwclock,hwclock-save,systemd-hwclock-save}.service` -> `/dev/null` |
+| Config, zoneinfo application and last-known logic | `/usr/local/lib/4tw/appliance.py` |
+| Online provider module/config | `/usr/local/lib/4tw/timezone_provider.py`; `/etc/4tw/timezone-provider.json` |
+| Bounded automatic service/trigger | `/etc/systemd/system/4tw-timezone-auto.service`; `/etc/NetworkManager/dispatcher.d/50-4tw-timezone` |
+| Current boot mode/attempt | `/run/4tw/timezone-mode`; `/run/4tw/timezone-attempted` |
 | Last successful automatic zone | `/var/lib/4tw/timezone` |
-| User override | `4TW-CONFIG/4tw.cfg` |
+| User override | `timezone=` in `4TW-CONFIG/4tw.cfg` |
+| Regression audit | `tests/check-rtc-policy.py` |
 
 ## Windows 11 coexistence
 
-Configure Windows once to interpret the same hardware RTC as UTC. As an administrator, create:
+Windows should use its normal local-RTC convention. The manually added `RealTimeIsUniversal` value must be removed outside 4TW-OS; **do not set it to `1` for this design**. Leave Windows **Set time automatically** enabled and synchronise Windows once after removing the value.
 
-```text
-HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\TimeZoneInformation
-RealTimeIsUniversal = DWORD (32-bit) value 1
-```
+4TW-OS never mounts or modifies Windows, its registry, EFI partition, BitLocker, TPM, Secure Boot settings, firmware clock settings or internal SSD.
 
-This is a manual Windows-side action. 4TW-OS never attempts it and does not mount or modify the Windows filesystem, registry, EFI partition, BitLocker, TPM, Secure Boot configuration or internal SSD. Windows and Linux still choose their displayed timezone independently.
+## Deferred physical Acer checklist
 
-## Physical hardware checklist
+These checks require the next combined IMG to be built and flashed. They are not proven by the current source/configured-rootfs validation.
 
-These checks must be performed on the Acer and are not implied by static or VM verification.
+Test A - establish the Windows baseline:
 
-Test A — Darwin:
+1. Remove `RealTimeIsUniversal` and confirm it is absent with `reg query HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation /v RealTimeIsUniversal`.
+2. Leave **Set time automatically** on, synchronise once, and shut down normally.
+3. Record `Get-Date -Format o`, `Get-TimeZone`, and `w32tm /query /status` in PowerShell. These record Windows' interpreted system-time baseline; Windows does not provide a simple supported command that independently proves the raw RTC contents.
 
-1. Set `timezone=auto` in `4tw.cfg` and boot in Darwin.
-2. Confirm network time becomes synchronized and local/browser time resolves to `Australia/Darwin`.
-3. Shut down cleanly, boot Windows, and confirm Windows time is immediately correct without toggling automatic time.
+Test B - Online 4TW:
 
-Test B — manual override:
+1. Set `timezone=auto`, boot 4TW-OS, and confirm the initial clock is plausible.
+2. Connect Wi-Fi and confirm the local/browser zone and time become correct.
+3. Leave Online running for at least 15 minutes, then shut down cleanly.
+4. Boot Windows and confirm the correct local time appears immediately without toggling automatic time.
 
-1. Set `timezone=Australia/Adelaide` in `4tw.cfg` and boot.
-2. Confirm Adelaide's IANA daylight-saving rules apply and no provider request is expected.
-3. Restore `timezone=auto` afterward.
+Test C - repeat:
 
-Test C — travel:
+1. Repeat the Windows -> 4TW Online -> Windows cycle at least twice.
+2. Compare the Windows records and confirm no repeatable offset is introduced.
 
-1. In another state, boot with `timezone=auto`.
-2. Confirm the newly detected IANA zone and browser local time are correct.
-3. Confirm both operating systems continue to use UTC RTC semantics.
+Test D - Offline:
+
+1. Boot Offline Typewriter without internet using a known manual or last-known zone.
+2. Confirm its displayed time is plausible, shut down, and boot Windows.
+3. Confirm Windows still starts with the correct local time.
+
+Test E - travel/manual override:
+
+1. In another state, confirm `timezone=auto` learns the new IANA zone when Online.
+2. Separately test a valid manual zone such as `Australia/Adelaide`, including its installed DST rules, then restore `timezone=auto`.
+3. Do not infer RTC preservation solely from displayed local time; complete the Windows-before/after cycle above.

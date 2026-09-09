@@ -1,4 +1,4 @@
-# Build notes — 8 September 2026
+# Build notes - 9 September 2026
 
 The implementation is self-contained in this repository. No BCLD source, previous BCLD artifact, internal disk, Windows EFI partition, BitLocker setting, or host firmware boot entry was changed.
 
@@ -61,9 +61,21 @@ optional-cache behavior. No package stage, rootfs configuration, image build,
 image edit or VM run was performed, and the existing Release IMG was left
 unchanged. See `docs/PORTABILITY.md`.
 
+The 9 September RTC-ownership pass added no package and did not run the package
+stage. It removed Ubuntu Chrony's active RTC synchronization directive while
+retaining its network sources and `makestep`, denied chronyd access to physical
+RTC devices, explicitly masked hardware-clock save units, and removed
+`/etc/adjtime`. A fixed Python module now reads only the RTC's sysfs date/time
+fields after the manual/last-known/UTC timezone is selected and sets only Linux
+`CLOCK_REALTIME`. Timezone changes now update validated zoneinfo presentation
+files directly rather than invoking a clock-management command. Focused unit
+tests, the new active-runtime RTC audit, all existing helper tests, and the
+complete `configure` stage were run without invoking the IMG builder or touching
+the WSL/Windows host clock.
+
 ## Output and persistence
 
-The final deliverable is `artifacts/4TW-OS_RELEASE.img`, 17,179,869,184 bytes, with `4TW-OS_RELEASE.img.sha256`. Its SHA-256 is `4908aa0cf6b36e7ce7fef27a3d907a1cabdfaafd2b584906976723fce9ae35fc`. The system filesystem has about 8.5 GiB free and `4TW-WRITING` has about 4.0 GiB free at creation. The initial configuration contains no Wi-Fi credentials, browser login or last-known location. The original logo is copied without resizing or editing its pixels; Plymouth/Sway scale it proportionally at display time.
+The existing deliverable remains `artifacts/4TW-OS_RELEASE.img`, 17,179,869,184 bytes, with `4TW-OS_RELEASE.img.sha256`. Its unchanged SHA-256 is `4908aa0cf6b36e7ce7fef27a3d907a1cabdfaafd2b584906976723fce9ae35fc`. This image predates the RTC-ownership source changes; it was deliberately neither rebuilt nor edited during this task. The staged RTC changes exist in source and the configured `.work/rootfs/` and will enter the next combined Release IMG. The prior image's system filesystem had about 8.5 GiB free and `4TW-WRITING` about 4.0 GiB free at creation.
 
 The earlier working image and checksum were preserved under `artifacts/pre-power-optimisation-2026-09-05/`. After all source/rootfs checks passed, exactly one new complete IMG was assembled for this optimisation pass. No post-build edit was needed. The CONFIG-device deadline remains 30 seconds from the earlier correction.
 
@@ -102,4 +114,4 @@ timed document autosave; that cache is persistent and Ctrl+S remains necessary.
 
 The power changes are limited to safe internal-panel DRM selection, normal NVIDIA runtime PM, modern CPU EPP/pstate preferences, conservative USB autosuspend exclusions, reduced Firefox recovery writes, and masking clearly unnecessary maintenance timers/services. See `POWER-OPTIMISATION.md` for the exact policy and hardware checklist.
 
-The timezone change is similarly isolated. `/etc/adjtime` explicitly says `UTC`; chrony remains enabled with `rtcsync`; `/etc/localtime` starts at `Etc/UTC`. `timezone=auto` applies `/var/lib/4tw/timezone` immediately when present, then the NetworkManager-triggered `4tw-timezone-auto.service` makes at most one four-second HTTPS request per boot to the plain-text `https://ipapi.co/timezone/` endpoint. Redirected, oversized, structured or invalid responses fail closed. A valid manual IANA value bypasses the provider. Full privacy, failure and Windows coexistence details are in `TIMEZONE.md`.
+The current timezone/RTC change is similarly isolated. Windows owns its local-wall-clock RTC; 4TW-OS has no active Chrony RTC directive, RTC device permission, hardware-clock save service or `/etc/adjtime` maintenance state. The boot helper imports RTC -> Linux system clock only after applying manual/last-known/UTC zoneinfo. `timezone=auto` still uses `/var/lib/4tw/timezone` immediately and the NetworkManager-triggered provider still makes at most one bounded HTTPS request. A valid manual IANA value still bypasses the provider. Full architecture, privacy, failure and Windows coexistence details are in `TIMEZONE.md`.

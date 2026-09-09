@@ -129,6 +129,26 @@ class SourceAndCacheTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Required project logo", result.stderr)
 
+    def test_source_copy_removes_stale_source_but_preserves_generated_data(self):
+        with tempfile.TemporaryDirectory(prefix="4tw source ") as source_name, \
+                tempfile.TemporaryDirectory(prefix="4tw destination ") as destination_name:
+            source, destination = Path(source_name), Path(destination_name)
+            (source / "assets").mkdir()
+            (source / "assets/4TW-OS.png").write_bytes(b"logo")
+            (source / "current.txt").write_text("current", encoding="utf-8")
+            (destination / "stale-source.txt").write_text("stale", encoding="utf-8")
+            (destination / ".work").mkdir()
+            (destination / ".work/keep.txt").write_text("generated", encoding="utf-8")
+            result = subprocess.run(
+                ["/bin/bash", "-Eeuo", "pipefail", "-c",
+                 'source "$1"; sync_4tw_source "$2" "$3"', "portability-test",
+                 str(self.project / "build/source-copy.sh"), str(source), str(destination)],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((destination / "stale-source.txt").exists())
+            self.assertEqual((destination / ".work/keep.txt").read_text(encoding="utf-8"), "generated")
+
     def test_real_checkout_copies_to_temporary_native_directory(self):
         with tempfile.TemporaryDirectory(prefix="4tw native copy ") as destination_name:
             destination = Path(destination_name)

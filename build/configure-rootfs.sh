@@ -8,6 +8,15 @@ rm -f "$WORK/configured.ok"
 trap unmount_chroot EXIT
 mount_chroot
 rsync -rt --chown=0:0 --chmod=D755,F644 "$PROJECT/rootfs-overlay/" "$ROOTFS/"
+# A deleted overlay file is not removed by rsync without --delete.  Absence of
+# adjtime avoids persisting either local-RTC or Linux RTC-maintenance state.
+rm -f "$ROOTFS/etc/adjtime"
+# Ubuntu's package default enables RTC writeback.  Remove only RTC-related
+# chrony directives and retain all network/system-clock synchronization policy.
+sed -E -i '/^[[:space:]]*(rtcsync|rtcfile|rtcautotrim)([[:space:]]|$)/d' "$ROOTFS/etc/chrony/chrony.conf"
+while IFS= read -r -d '' chrony_config; do
+    sed -E -i '/^[[:space:]]*(rtcsync|rtcfile|rtcautotrim)([[:space:]]|$)/d' "$chrony_config"
+done < <(find "$ROOTFS/etc/chrony/conf.d" -type f -name '*.conf' -print0)
 find "$ROOTFS/usr/local/bin" "$ROOTFS/usr/local/sbin" "$ROOTFS/usr/local/libexec" -type f -exec chmod 755 {} +
 chmod 755 "$ROOTFS/etc/NetworkManager/dispatcher.d/50-4tw-timezone"
 chmod 440 "$ROOTFS/etc/sudoers.d/4tw-kiosk"
@@ -41,6 +50,7 @@ inroot systemctl mask NetworkManager-wait-online.service systemd-networkd-wait-o
     apt-daily.timer apt-daily-upgrade.timer fstrim.timer \
     dpkg-db-backup.timer e2scrub_all.timer e2scrub_reap.service motd-news.timer \
     ua-timer.timer ubuntu-advantage.service ua-reboot-cmds.service
+inroot systemctl mask hwclock.service hwclock-save.service systemd-hwclock-save.service
 # Ubuntu selects Plymouth through update-alternatives.
 inroot update-alternatives --install /usr/share/plymouth/themes/default.plymouth default.plymouth /usr/share/plymouth/themes/4tw/4tw.plymouth 200
 inroot update-alternatives --set default.plymouth /usr/share/plymouth/themes/4tw/4tw.plymouth
@@ -50,13 +60,16 @@ for kernel in "$ROOTFS"/boot/vmlinuz-*-generic; do
     inroot update-initramfs "$action" -k "$version"
 done
 inroot visudo -cf /etc/sudoers
-inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/timezone_provider.py \
+inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/rtc_clock.py \
+    /usr/local/lib/4tw/timezone_provider.py \
     /usr/local/libexec/4tw-online /usr/local/libexec/4tw-typewriter
 python3 "$PROJECT/tests/test_helpers.py"
 python3 "$PROJECT/tests/test_timezone.py"
+python3 "$PROJECT/tests/test_rtc_clock.py"
 python3 "$PROJECT/tests/test_dual_mode.py"
 python3 "$PROJECT/tests/test_build_portability.py"
 python3 "$PROJECT/tests/check-rootfs.py" "$ROOTFS" "$PROJECT"
+python3 "$PROJECT/tests/check-rtc-policy.py" "$ROOTFS"
 install -d -m 700 -o 1000 -g 1000 "$ROOTFS/run/4tw-sway-test"
 for config in sway.conf sway-online.conf sway-offline.conf; do
     inroot runuser -u kiosk -- env XDG_RUNTIME_DIR=/run/4tw-sway-test WLR_BACKENDS=headless WLR_RENDERER=pixman \

@@ -1,6 +1,6 @@
 # Release verification
 
-The final deliverable is `artifacts/4TW-OS_RELEASE.img` (17,179,869,184 bytes). Use its adjacent `.sha256` file for the definitive final checksum. This report distinguishes automated/VM checks from Acer hardware testing.
+The existing deliverable is `artifacts/4TW-OS_RELEASE.img` (17,179,869,184 bytes). It predates the staged Windows-owned/no-write RTC policy. The user explicitly deferred a new IMG, so this report distinguishes the unchanged prior-image evidence from the newer source and configured-rootfs validation.
 
 Final SHA-256:
 
@@ -8,9 +8,39 @@ Final SHA-256:
 4908aa0cf6b36e7ce7fef27a3d907a1cabdfaafd2b584906976723fce9ae35fc
 ```
 
-## Actual IMG inspection
+No replacement checksum was generated.
 
-The image was attached as a **read-only loop device**, not flashed to a drive. `artifacts/verify-img.log` records these checks:
+## RTC no-write validation - source and configured rootfs
+
+The complete `configure` stage assembled the intended next-image runtime at `.work/rootfs/` using the existing package cache and no package download. It did **not** invoke `build-img.sh`, edit the existing image or execute a hardware-clock operation on WSL/Windows.
+
+Hardware RTC policy:
+
+```text
+Owner: host Windows installation (normal local-time RTC convention)
+4TW-OS reads RTC: yes, once at boot through read-only sysfs attributes
+4TW-OS writes RTC: no configured runtime or shutdown path
+chrony rtcsync: disabled
+RTC shutdown writeback: disabled and known save units masked
+Network system-clock sync: enabled in Online mode
+```
+
+| Check against configured `.work/rootfs/` | Result |
+| --- | --- |
+| Chrony configuration | Network source directives and `makestep` retained; no active RTC sync/calibration directive under `/etc/chrony/` |
+| Chrony device access | `/etc/systemd/system/chrony.service.d/4tw-no-rtc.conf` resets the packaged `char-rtc rw` allowance with a closed device policy |
+| Boot-time RTC import | `/usr/local/lib/4tw/rtc_clock.py` reads `rtc*/date` and `rtc*/time`, converts with `/etc/localtime`, and sets only `CLOCK_REALTIME` |
+| Boot ordering | `4tw-configure.service` applies manual/last-known/UTC zoneinfo before calling the RTC import, before either Online networking or Offline FocusWriter startup |
+| RTC maintenance state | `/etc/adjtime` absent |
+| Timezone application | `/usr/local/lib/4tw/appliance.py` validates installed IANA data and atomically changes `/etc/localtime` plus `/etc/timezone`; no clock utility or RTC state change |
+| RTC-save services | `/etc/systemd/system/hwclock.service`, `hwclock-save.service` and `systemd-hwclock-save.service` all masked to `/dev/null` |
+| Shutdown/custom hooks | Active runtime, systemd, NetworkManager, init and system-shutdown paths contain no known hardware-clock writer |
+| Suspend/resume scope | No kiosk shortcut; logind ignores lid, suspend and hibernate keys, so no normal appliance suspend/resume path is configured |
+| Regression gate | `tests/check-rtc-policy.py` passes against configured rootfs and is called by both `configure-rootfs.sh` and future `verify-img.sh` |
+
+## Existing prior IMG inspection
+
+The prior image was attached as a **read-only loop device**, not flashed to a drive. `artifacts/verify-img.log` records these historical checks. Its two RTC rows below describe that older image, not the newly configured rootfs:
 
 | Check | Result |
 | --- | --- |
@@ -54,9 +84,9 @@ The image was attached as a **read-only loop device**, not flashed to a drive. `
 | Firefox writes/graphics | RAM cache parent and five-minute recovery interval; persistent profile retained; hardware acceleration not disabled |
 | Background work | Package backup, ext4 scrub, MOTD news and Ubuntu Pro units are masked and documented |
 | Build cache | No package archives or external build-cache directory in the image |
-| RTC policy | `/etc/adjtime` ends in `UTC`; no local-RTC command or `LOCAL` policy is installed |
+| Prior-image RTC policy | `/etc/adjtime` ends in `UTC`; this is superseded in source/configured rootfs but intentionally not patched into the image |
 | Local timezone fallback | `/etc/localtime` links to `/usr/share/zoneinfo/Etc/UTC`; `/etc/timezone` is `Etc/UTC` |
-| Network time | Chrony is installed/enabled for Online and retains `rtcsync`; fixed Offline transition stops it without changing UTC RTC semantics |
+| Prior-image network time | Chrony is installed/enabled for Online and still has the old RTC-sync directive; do not treat this image as containing the new no-write policy |
 | Automatic timezone | Connectivity-gated, sandboxed `4tw-timezone-auto.service`, ten-second unit bound and four-second HTTPS provider timeout |
 | Location privacy | Single-field `https://ipapi.co/timezone/`; redirects/JSON/HTML/invalid UTF-8/oversized responses rejected; GeoClue is not installed |
 | Last-known state | Fresh IMG has no stale `/var/lib/4tw/timezone`; successful changed automatic results can persist there |
@@ -68,7 +98,11 @@ The image was attached as a **read-only loop device**, not flashed to a drive. `
 
 `tests/test_helpers.py`: **17 tests passed**, covering capacity-only/missing batteries, power/current conversions, measured-rate runtime estimates, dGPU states, internal-panel GPU selection, conservative NVIDIA/CPU/USB policy, invalid fields, brightness steps/clamps, integer sysfs writes, URL validation, Base64 validation, duplicate/unknown keys, validated timezone configuration and shell-like text treated only as data.
 
-`tests/test_timezone.py`: **8 tests passed**, covering the fixed HTTPS endpoint and four-second timeout, one minimal request, rejected redirects, provider timeout/unavailability, malformed JSON/HTML/multiple lines/invalid UTF-8/oversized responses, installed-zone validation, fixed `timedatectl` argument construction, last-known/UTC startup fallback, unchanged-state write avoidance, invalid-response state preservation, one-attempt-per-boot behaviour, and proof that manual mode never invokes the provider.
+`tests/test_timezone.py`: **8 tests passed**, covering the fixed HTTPS endpoint and four-second timeout, one minimal request, rejected redirects, provider timeout/unavailability, malformed JSON/HTML/multiple lines/invalid UTF-8/oversized responses, installed-zone validation, direct zoneinfo-file application without a clock command, last-known/UTC startup fallback, unchanged-state write avoidance, invalid-response state preservation, one-attempt-per-boot behaviour, and proof that manual mode never invokes the provider.
+
+`tests/test_rtc_clock.py`: **6 tests passed**, covering standard RTC sysfs values, missing/malformed/implausible data, local-wall-clock to UTC conversion, fixed Linux `CLOCK_REALTIME` setting, failure without a setter call, and absence of an RTC device/command execution path.
+
+`tests/check-rtc-policy.py`: **14 configured-rootfs checks passed**, covering Chrony directives/network time/device denial, prevention of later RTC-device re-allowance, explicit RTC-save masks, active runtime/shutdown hooks, absent `/etc/adjtime`, read-only RTC import ordering, and clock-command-free timezone application.
 
 `tests/test_dual_mode.py` passed, covering valid and malformed kernel-mode
 selection, fixed/bounded NetworkManager commands, Offline service stopping and
@@ -76,12 +110,13 @@ WRITING mounting, newest-document selection, exclusion handling, persistent
 timestamped Draft creation, exact two-entry GRUB output, safe Online fallback,
 CONFIG-before-timeout ordering and GRUB syntax validation.
 
-`tests/test_build_portability.py`: **13 tests passed**, covering explicit,
+`tests/test_build_portability.py`: **14 tests passed**, covering explicit,
 sudo, WSL-default and unambiguous account selection; rejected root/unknown/
 ambiguous users and unsafe or Windows-backed homes; WSL configuration parsing;
 source and destination paths containing spaces; byte-identical project-local
 logo copying; clear missing-logo failure; silent missing optional cache;
 copy-only/ignore-existing `.deb` cache seeding; generated-directory exclusion;
+stale source removal without deleting generated build/cache data;
 and absence of original-developer paths from source. All build `.sh` files also
 passed `bash -n`. These build-host-only tests did not alter the configured
 rootfs or final IMG.
@@ -177,12 +212,15 @@ The UTC/timezone image also booted from the signed removable path under Microsof
 | Document selection/creation | `recent_writing_document()` and `ensure_writing_document()` in `/usr/local/lib/4tw/appliance.py` |
 | FocusWriter defaults/recovery | runtime QSettings generated by `4tw-typewriter`; persistent `XDG_DATA_HOME=/home/kiosk/.local/share` for FocusWriter's application/recovery data |
 
-## Exact timezone implementation in the final IMG
+## RTC/timezone implementation staged for the next combined IMG
 
 | Responsibility | Runtime file or setting |
 | --- | --- |
-| UTC hardware RTC | `/etc/adjtime`; initial `/etc/localtime` and `/etc/timezone` use `Etc/UTC` |
-| NTP/RTC synchronization | enabled `chrony.service`; `rtcsync` in `/etc/chrony/chrony.conf` |
+| Windows-owned local RTC | `/etc/adjtime` absent; no Linux RTC-maintenance state |
+| Boot-time read | `/usr/local/lib/4tw/rtc_clock.py`, called from `configure_runtime()` after timezone selection |
+| NTP system-clock synchronization | enabled `chrony.service`; network sources and `makestep` retained; active RTC directives removed |
+| Chrony RTC isolation | `/etc/systemd/system/chrony.service.d/4tw-no-rtc.conf` |
+| Shutdown/save isolation | masked `/etc/systemd/system/{hwclock,hwclock-save,systemd-hwclock-save}.service` |
 | Config validation and last-known logic | `/usr/local/lib/4tw/appliance.py` |
 | Automatic service | `/etc/systemd/system/4tw-timezone-auto.service` |
 | Connectivity trigger | `/etc/NetworkManager/dispatcher.d/50-4tw-timezone` |
@@ -209,6 +247,8 @@ These are **not claimed as hardware-verified**:
 - Actual panel brightness, default 50%, 10–100% limits, both brightness directions.
 - Physical keyboard shortcut operation, clean Ctrl+Alt+Delete shutdown and the laptop power button.
 - Integrated/discrete GPU selection, runtime power state and battery life.
-- Successful public-IP timezone detection on the Acer's real Wi-Fi; correct Darwin/Adelaide/other-state results; VPN/proxy behaviour; DST display; and Windows coexistence after manually setting `RealTimeIsUniversal=1`.
+- Secure Boot/runtime boot of a future IMG containing the staged RTC change.
+- Physical Acer RTC behavior, including a 15+ minute Chrony run, repeated Online 4TW -> Windows clock checks and Offline Typewriter -> Windows clock checks after manually removing `RealTimeIsUniversal`.
+- Successful public-IP timezone detection on the Acer's real Wi-Fi; correct Darwin/Adelaide/other-state results; VPN/proxy behaviour and DST display.
 
 After flashing, fill in only the USB's `4tw.cfg`, boot with Secure Boot enabled, complete these checks plus the Darwin/manual/travel checklist in `TIMEZONE.md`, and always use clean shutdown before unplugging. The USB is unencrypted and must not be treated as protection against physical tampering.
