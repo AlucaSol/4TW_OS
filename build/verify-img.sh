@@ -4,6 +4,7 @@ source "$(dirname -- "$0")/common.sh"
 exec 9>"$WORK/build.lock"
 flock -n 9 || { echo 'Another build is running.' >&2; exit 1; }
 IMAGE="$ARTIFACTS/4TW-OS_RELEASE.img"
+rm -f "$WORK/verified.ok" "$WORK/verified-image.sha256" "$WORK/verified-source.sha256"
 [[ -f "$IMAGE" && ! -L "$IMAGE" ]] || exit 1
 (cd "$ARTIFACTS" && sha256sum --check 4TW-OS_RELEASE.img.sha256)
 MOUNT="$WORK/verify-mount"
@@ -91,4 +92,10 @@ sync
 cleanup
 echo 'PASS: WRITING is FAT32 and UID 1000 can create/rename documents (tested on partition copy).'
 (cd "$ARTIFACTS" && sha256sum --check 4TW-OS_RELEASE.img.sha256)
+IMAGE_HASH=$(awk 'NR==1 {print $1}' "$ARTIFACTS/4TW-OS_RELEASE.img.sha256")
+printf '%s\n' "$IMAGE_HASH" > "$WORK/verified-image.sha256"
+python3 "$PROJECT/build/source-digest.py" "$PROJECT" > "$WORK/verified-source.sha256"
+printf '4TW-OS Release verification PASSED\nVerified UTC: %s\nSHA-256: %s\nDetailed log: verify-img.log\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$IMAGE_HASH" > "$ARTIFACTS/VERIFICATION.txt"
+touch "$WORK/verified.ok"
 echo 'PASS: final IMG unchanged after all static verification.'

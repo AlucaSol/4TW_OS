@@ -2,6 +2,46 @@
 
 The implementation is self-contained in this repository. No BCLD source, previous BCLD artifact, internal disk, Windows EFI partition, BitLocker setting, or host firmware boot entry was changed.
 
+## Public-launcher Release build
+
+The new `BUILD-4TW-OS.cmd` / `BUILD-4TW-OS.ps1` path completed one full Release
+build on 9 September 2026. It detected the existing `Ubuntu-26.04` WSL2
+distribution, dynamically resolved `/home/<build-user>/4tw-ubuntu-sway-build`,
+passed both 18-GiB free-space checks, and invoked `build/run-wsl.sh all`.
+
+Package preparation retained and reused all 1,062 native cached archives. The
+signed index refresh found 14 current Ubuntu updates and downloaded only their
+19.5 MB delta; the normal configured package set otherwise required no new
+archives. Configuration then passed the helper, dual-mode, RTC, timezone,
+rootfs, Sway, sudo, FocusWriter, and real-Firefox policy/navigation tests.
+
+The orchestrator checksum-validated and preserved the preceding verified image
+as `artifacts/previous/4TW-OS_RELEASE-2026-09-09-013620.img`, then invoked the
+IMG builder exactly once. Final read-only verification passed all GPT,
+filesystem, Release/kiosk, website-policy, credential-cleanliness, copied-FAT
+write, RTC-policy, and Microsoft/Canonical Secure Boot signature checks. No
+second IMG build was performed: after a Windows-export performance correction,
+the launcher recognized and reused the already verified current image.
+
+The launcher rechecked SHA-256 using native WSL I/O, copied the image once to a
+temporary Windows `.partial` path, hashed all copied bytes, and published the
+Rufus-ready name only after it matched. The public output is:
+
+```text
+%USERPROFILE%\Downloads\4TW-OS\4TW-OS_RELEASE.img
+17,179,869,184 bytes
+SHA-256: b8b1a10766bc71166f9299f68680c08e980d8ba302ce8390518d3f4e19db9a53
+```
+
+Windows PowerShell 5.1 parsed all launcher/module/test files. The mockable
+launcher suite passed 20 checks covering spaces, ZIP use without Git, WSL and
+Ubuntu states (including localized status text), restart/resume, first-run
+setup, stage failure, disk space, Downloads resolution, source/copy checksums,
+bounded prior-output retention, `.partial` failure safety, and path-identity
+regression. The existing 14-test portability suite passed. All modified shell
+scripts passed `bash -n` and warning-level Shellcheck. PSScriptAnalyzer was not
+installed and was not added solely for this task.
+
 ## Environment and stages
 
 Windows 11 PowerShell invoked the existing `Ubuntu-26.04` WSL2 distribution as root. Source was copied under the dynamically resolved non-root WSL home, in `4tw-ubuntu-sway-build/`, for native Linux ownership, filesystems and loop mounts. Exact Windows commands are in `README.md`.
@@ -75,7 +115,12 @@ the WSL/Windows host clock.
 
 ## Output and persistence
 
-The existing deliverable remains `artifacts/4TW-OS_RELEASE.img`, 17,179,869,184 bytes, with `4TW-OS_RELEASE.img.sha256`. Its unchanged SHA-256 is `4908aa0cf6b36e7ce7fef27a3d907a1cabdfaafd2b584906976723fce9ae35fc`. This image predates the RTC-ownership source changes; it was deliberately neither rebuilt nor edited during this task. The staged RTC changes exist in source and the configured `.work/rootfs/` and will enter the next combined Release IMG. The prior image's system filesystem had about 8.5 GiB free and `4TW-WRITING` about 4.0 GiB free at creation.
+The current native deliverable is `artifacts/4TW-OS_RELEASE.img`,
+17,179,869,184 bytes, with `4TW-OS_RELEASE.img.sha256`. Its SHA-256 is
+`b8b1a10766bc71166f9299f68680c08e980d8ba302ce8390518d3f4e19db9a53`.
+It contains the Windows-owned/no-write RTC policy, automatic/manual timezone
+model, Online/Offline modes, power changes, and current launcher-built rootfs.
+The root filesystem has about 8.5 GiB free and `4TW-WRITING` about 4.0 GiB free.
 
 The earlier working image and checksum were preserved under `artifacts/pre-power-optimisation-2026-09-05/`. After all source/rootfs checks passed, exactly one new complete IMG was assembled for this optimisation pass. No post-build edit was needed. The CONFIG-device deadline remains 30 seconds from the earlier correction.
 
@@ -99,7 +144,10 @@ write and checksum checks. The pre-correction Windows image is retained under
 `artifacts/pre-wifi-retry-monitor-fix-2026-09-08/`; the corrected Windows export
 independently matched the final native SHA-256.
 
-Artifact export uses Windows `Copy-Item` from the WSL UNC path. The initial sparse rsync transfers across WSL/NTFS were slow and redundantly started by diagnostic stages; those exact transfer processes were stopped, and rsync removed its incomplete temporary copies. The complete native IMG remained intact. The wrapper now exports only logs/checksums automatically, and README includes the explicit single IMG copy command.
+Artifact export uses one Windows `Copy-Item` from the WSL UNC path after native
+verification. Small logs/checksums are synchronized automatically, but the
+sparse IMG is not. The launcher copies under a `.partial` name, rehashes the
+complete Windows file, and publishes the final name only on a checksum match.
 
 This is a normal writable USB installation, not a RAM-root BCLD clone. Firefox login/profile state persists. Transient directories, logging and browser cache use RAM. There is no swap, automatic package-update timer, desktop workflow or normal administrative login.
 
@@ -114,4 +162,11 @@ timed document autosave; that cache is persistent and Ctrl+S remains necessary.
 
 The power changes are limited to safe internal-panel DRM selection, normal NVIDIA runtime PM, modern CPU EPP/pstate preferences, conservative USB autosuspend exclusions, reduced Firefox recovery writes, and masking clearly unnecessary maintenance timers/services. See `POWER-OPTIMISATION.md` for the exact policy and hardware checklist.
 
-The current timezone/RTC change is similarly isolated. Windows owns its local-wall-clock RTC; 4TW-OS has no active Chrony RTC directive, RTC device permission, hardware-clock save service or `/etc/adjtime` maintenance state. The boot helper imports RTC -> Linux system clock only after applying manual/last-known/UTC zoneinfo. `timezone=auto` still uses `/var/lib/4tw/timezone` immediately and the NetworkManager-triggered provider still makes at most one bounded HTTPS request. A valid manual IANA value still bypasses the provider. Full architecture, privacy, failure and Windows coexistence details are in `TIMEZONE.md`.
+The final image includes the isolated timezone/RTC design. Windows owns its
+local-wall-clock RTC; 4TW-OS has no active Chrony RTC directive, RTC device
+permission, hardware-clock save service or `/etc/adjtime` maintenance state.
+The boot helper imports RTC -> Linux system clock only after applying
+manual/last-known/UTC zoneinfo. `timezone=auto` uses `/var/lib/4tw/timezone`
+immediately and the NetworkManager-triggered provider makes at most one bounded
+HTTPS request. A valid manual IANA value bypasses the provider. Full details are
+in `TIMEZONE.md`.

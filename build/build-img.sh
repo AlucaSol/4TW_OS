@@ -18,6 +18,7 @@ assert json.load(open(sys.argv[1])).get('passed'), 'FocusWriter smoke test has n
 PY
 IMAGE="$ARTIFACTS/4TW-OS_RELEASE.img"
 [[ ! -e "$IMAGE" ]] || { echo "Refusing to overwrite existing image: $IMAGE" >&2; exit 1; }
+rm -f "$WORK/verified.ok" "$WORK/verified-image.sha256" "$WORK/verified-source.sha256"
 [[ $(du -sx -B1 "$ROOTFS" | cut -f1) -lt 7000000000 ]] || {
     echo 'Root filesystem too large to leave sufficient free space.' >&2; exit 1;
 }

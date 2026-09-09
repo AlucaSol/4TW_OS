@@ -7,13 +7,28 @@ Ubuntu 26.04 amd64 → Microsoft-signed Ubuntu shim → Canonical-signed GRUB an
 
 Firefox uses Mozilla's official APT repository, not Snap or a third-party browser build. There is no desktop environment, bar, launcher, file manager, terminal shortcut, SSH server, or general passwordless sudo. Closing Firefox or Sway requests shutdown; it does not open a shell.
 
-## Build from Windows 11
+## Building 4TW-OS on Windows (beginner)
 
-Use **PowerShell** opened in this repository's root (the directory containing
-this README, `build/` and `assets/`). You do not need to open an Ubuntu desktop.
-These commands call the installed `Ubuntu-26.04` WSL2 distribution directly.
-The commands derive the Linux form of the current repository path, so the
-checkout may have any name and paths containing spaces remain supported.
+1. Download and extract this repository.
+2. Double-click **`BUILD-4TW-OS.cmd`**.
+3. Follow any one-time WSL or Ubuntu account-setup instructions it displays.
+4. If Windows must restart, restart it and double-click **`BUILD-4TW-OS.cmd`** again.
+5. Wait for **4TW-OS BUILD COMPLETE**.
+6. Use Rufus to write the resulting `4TW-OS_RELEASE.img` to the intended USB.
+
+The verified image, checksum and short report are placed in
+`Downloads\4TW-OS\`. The launcher does not select, erase or write a USB. A
+fresh machine can require one Windows Administrator approval, one restart and
+normal Ubuntu username/password creation. Progress survives those pauses; run
+the same launcher again. See `docs/WINDOWS-BUILDER.md` for details.
+
+## Manual/developer build from Windows 11
+
+The low-click launcher is the normal public build route. Developers may still
+run the tested stages individually. Open PowerShell in this repository's root
+(the directory containing this README, `build/` and `assets/`). You do not need
+an Ubuntu desktop. These commands call `Ubuntu-26.04` WSL2 directly and support
+repository paths containing spaces.
 
 ```powershell
 wsl.exe -l -v
@@ -21,28 +36,17 @@ $repoWindows = (Get-Location).Path
 $repoWsl = (wsl.exe -d Ubuntu-26.04 -- wslpath -a -u $repoWindows).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repoWsl) { throw 'Could not resolve the repository path in WSL' }
 
-wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh packages
-if ($LASTEXITCODE -ne 0) { throw 'Package preparation failed' }
+wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh host-deps
+if ($LASTEXITCODE -ne 0) { throw 'Build-host dependency setup failed' }
 
-wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh configure
-if ($LASTEXITCODE -ne 0) { throw 'Configuration/tests failed' }
-
-wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh image
-if ($LASTEXITCODE -ne 0) { throw 'Image creation failed' }
-
-wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh verify
-if ($LASTEXITCODE -ne 0) { throw 'Image verification failed' }
-
-# Make one normal Windows copy after verification; sparse rsync transfers are slow.
-$nativeBuild = (wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- python3 build/resolve-native-build.py).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $nativeBuild) { throw 'Could not resolve the native build directory' }
-$nativeImageLinux = "$nativeBuild/artifacts/4TW-OS_RELEASE.img"
-$nativeImageWindows = (wsl.exe -d Ubuntu-26.04 -- wslpath -w $nativeImageLinux).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $nativeImageWindows) { throw 'Could not resolve the IMG path for Windows' }
-Copy-Item -LiteralPath $nativeImageWindows -Destination '.\artifacts\4TW-OS_RELEASE.img' -ErrorAction Stop
+wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh all
+if ($LASTEXITCODE -ne 0) { throw 'Release build or verification failed' }
 ```
 
-Stop if any stage fails; do not continue to the next command. WSL's unrelated `Failed to translate D:\Program Files\ytdlp` PATH warning does not indicate a build failure.
+`all` executes package preparation, configuration, IMG construction and exact
+IMG verification in order. It stops on the first failure. The `packages`,
+`configure`, `image` and `verify` dispatches remain available for diagnostics.
+Do not continue manually after a failed stage.
 
 All build stages require WSL root because they create device nodes, chroot
 mounts, filesystems and loop devices. `run-wsl.sh` determines the non-root WSL
@@ -59,24 +63,18 @@ The wrapper copies source, including the required project-local
 ```
 
 Builds run there, not on NTFS. A missing or externally linked logo fails before
-source synchronization. The existing WSL tools are debootstrap, APT, Python 3,
-rsync, curl, GnuPG, GPT/loop/mount tools, FAT/ext4 tools and sbsigntool. No
-Docker, new Codex plugin, custom signing key, or Ubuntu GUI is needed. Internet
-access is needed for current signed indexes and packages missing from cache.
+source synchronization. `host-deps` idempotently installs only the normal IMG
+builder's required Ubuntu tools; QEMU remains optional. No Docker, Codex plugin,
+custom signing key or Ubuntu GUI is needed. Internet access is required when
+the authenticated package workflow needs current indexes or packages.
 
-Successful stages copy logs/checksums back automatically; the explicit
-`Copy-Item` command exports the IMG to the checkout's own:
-
-```text
-artifacts\
-    4TW-OS_RELEASE.img
-    4TW-OS_RELEASE.img.sha256
-    packages.tsv
-    package-origins.txt
-    *.log
-```
-
-The IMG builder deliberately refuses to overwrite an existing IMG. Before a later rebuild, move the existing native IMG and checksum to an explicitly named backup location. Keep any Windows copy you want to retain too. Do not delete the entire native build directory: it contains the reusable rootfs and cache.
+Successful stages copy small logs and checksums back to `artifacts\`; they do
+not repeatedly copy the large sparse IMG. The public launcher exports the IMG
+once, and only after verification, to `Downloads\4TW-OS\` and hashes that
+Windows copy again. If runtime source changed, `all` safely archives the last
+verified native output under `artifacts/previous/` before constructing its
+replacement. It retains at most one previous image. An unverified existing IMG
+is never overwritten or presented as ready.
 
 The builder creates **one 16 GiB raw GPT disk image**, with a 256 MiB EFI partition, approximately 11.5 GiB ext4 system partition, 256 MiB FAT32 `4TW-CONFIG`, and approximately 4 GiB FAT32 `4TW-WRITING`. It is still one Ubuntu root filesystem, not two operating systems. No ISO is needed, and the image fits a nominal 32 GB USB.
 

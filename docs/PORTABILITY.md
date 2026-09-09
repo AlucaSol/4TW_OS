@@ -1,8 +1,8 @@
-# Build-host portability and future launcher notes
+# Build-host portability and Windows launcher notes
 
-This pass prepares the existing stage architecture for other Windows/WSL users.
-It deliberately does **not** add a batch file, PowerShell launcher, automatic
-WSL installer, restart handler, or second build pipeline.
+The portable stage architecture is now wrapped by the low-click Windows
+launcher. The wrapper orchestrates the same Linux implementation; it does not
+create a second build pipeline.
 
 ## Native WSL path strategy
 
@@ -34,8 +34,8 @@ source files are removed so a deleted overlay file cannot survive a later sync.
 `.gitattributes` preserves LF endings for Linux build/runtime scripts
 when Git checks the repository out on Windows; generated Python bytecode is not
 source-controlled.
-The large IMG remains native until the explicit post-verification Windows copy
-documented in `README.md`.
+The large IMG remains native until the launcher's single post-verification
+Windows copy documented in `README.md` and `docs/WINDOWS-BUILDER.md`.
 
 ## Self-containment and path audit
 
@@ -103,8 +103,7 @@ through the existing authenticated package workflow.
 
 ## Stage order and resume behavior
 
-The future launcher should call the existing stages, as WSL root, in this exact
-order:
+The launcher calls the existing stages, as WSL root, in this exact order:
 
 ```text
 prepare-packages.sh
@@ -137,13 +136,13 @@ failure, rerun that stage. If a process was forcibly interrupted while WSL
 remains running, inspect lingering chroot/loop mounts before retrying; a Windows
 restart naturally stops WSL mounts but does not erase native files.
 
-## Future beginner experience (design only)
+## Beginner launcher flow
 
 First run on a Windows PC without WSL:
 
 ```text
-future launcher enables/installs WSL2
-future launcher installs Ubuntu 26.04 if needed
+launcher enables/installs official WSL2 components if needed
+launcher installs Ubuntu 26.04 if needed
 Windows may request a restart
 user restarts Windows and runs the same launcher again
 ```
@@ -151,29 +150,31 @@ user restarts Windows and runs the same launcher again
 Second/resumed run:
 
 ```text
-future launcher detects WSL2 and Ubuntu 26.04
+launcher detects WSL2 and Ubuntu 26.04
 resolves the checkout and non-root WSL home
 prepares packages
 configures and tests the rootfs
 creates exactly one IMG
 verifies that IMG
-copies the verified IMG to Windows
+copies and rehashes the verified IMG in Windows Downloads
 tells the user to flash it with Rufus
 ```
 
-This remains documentation only. A future task should add the low-click
-Windows launcher around these scripts, with restart/resume detection and clear
-progress/error reporting, without duplicating any Linux build stage.
+`BUILD-4TW-OS.cmd` is the stable double-click entry point and
+`BUILD-4TW-OS.ps1` implements detection, resumable setup, preflights and final
+export. `build/run-wsl.sh all` delegates to `build/build-all.sh`, which runs the
+four established scripts in order. A small optional ignored state file improves
+the post-restart explanation, but every run redetects actual capabilities.
 
 ## Remaining portability limitations
 
 - Windows 11 with WSL2 and the intended `Ubuntu-26.04` distribution is required.
   A first-time WSL installation may require a Windows restart.
-- The WSL host needs the documented Linux build tools and enough native free
-  space for the rootfs, cache and 16 GiB sparse IMG.
+- The WSL host needs enough native free space for the rootfs, cache and 16 GiB
+  sparse IMG. The launcher installs the documented Linux build tools.
 - A fresh cache requires internet access to authenticated Ubuntu and Mozilla
   repositories.
 - All stages require WSL root. Hosts with multiple eligible WSL accounts and no
   configured default must supply `FOURTW_WSL_USER`.
-- The large IMG is not automatically copied to Downloads; this is intentionally
-  deferred to the future launcher.
+- After exact verification, the large IMG is copied once to the current user's
+  known Downloads folder and rehashed there. Rufus flashing remains manual.

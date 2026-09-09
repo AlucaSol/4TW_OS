@@ -26,7 +26,7 @@ Offline skips NetworkManager, Chrony and online timezone lookup. It still select
 - `hwclock.service`, `hwclock-save.service` and `systemd-hwclock-save.service` are explicitly masked under `/etc/systemd/system/`.
 - `/etc/adjtime` is absent. 4TW-OS does not persist systemd/hwclock local-RTC ownership or maintenance state.
 - Timezone changes atomically select an installed zoneinfo file directly; they do not invoke `timedatectl`, `hwclock` or another clock-management command.
-- `tests/check-rtc-policy.py` scans the configured runtime and shutdown paths for active RTC writers on every configure and future IMG verification pass.
+- `tests/check-rtc-policy.py` scans the configured runtime and shutdown paths for active RTC writers during every configure and IMG verification pass.
 
 These choices also apply to clean poweroff and the existing Ctrl+Alt+Delete and physical-power-button paths. The kiosk has no suspend shortcut, already ignores lid close, and now explicitly ignores logind suspend/hibernate keys; no normal appliance suspend/resume path is configured.
 
@@ -67,7 +67,9 @@ Windows should use its normal local-RTC convention. The manually added `RealTime
 
 ## Deferred physical Acer checklist
 
-These checks require the next combined IMG to be built and flashed. They are not proven by the current source/configured-rootfs validation.
+The combined IMG has now been built and statically verified. These checks still
+require that current image to be flashed and booted on the Acer; they are not
+proven by WSL/static verification.
 
 Test A - establish the Windows baseline:
 
