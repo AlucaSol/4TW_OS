@@ -324,8 +324,8 @@ try {
         '3. Select 4TW-OS_RELEASE.img.',
         '4. Write the image to the USB.',
         '',
-        'WARNING: Rufus will erase the selected USB drive.',
-        'Secure Boot should remain ENABLED on supported target hardware.'
+        'WARNING: Rufus will erase all data on the selected USB drive.',
+        'Please backup any important files before proceeding.',
     )
     if (-not $NonInteractive) {
         Read-Host 'Press Enter to open the output folder' | Out-Null
