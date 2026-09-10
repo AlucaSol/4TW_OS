@@ -6,4 +6,4 @@ edits. FocusWriter 1.9 has crash/session recovery, but not timed saving to the
 open document.
 
 Always use the 4TW-OS clean shutdown control and wait for complete power-off
-before removing the USB. In Windows, safely eject the USB before unplugging it.
+before removing the USB (Ctr+Alt+Delete). In Windows, safely eject the USB before unplugging it.
