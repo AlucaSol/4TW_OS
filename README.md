@@ -1,7 +1,6 @@
 # 4TW-OS — Ubuntu/Sway Release
 
-This Ubuntu/Sway implementation is self-contained. Building it does not require
-an earlier BCLD checkout, a sibling repository, or files outside this repository.
+This Ubuntu/Sway implementation is self-contained.
 
 Ubuntu 26.04 amd64 → Microsoft-signed Ubuntu shim → Canonical-signed GRUB and kernel → a two-choice appliance menu → systemd → automatic kiosk login → Sway → either one Firefox kiosk at `https://4thewords.com/` or one fullscreen Offline Typewriter.
 
