@@ -1,5 +1,32 @@
 # Build notes - 11 September 2026
 
+## Safe cleanup utility (no cleanup performed)
+
+`CLEANUP-4TW-OS.cmd` now verifies the exact Windows public release before it
+offers removal of the complete project-specific native WSL tree or generated
+image duplicates under the repository's ignored `artifacts` directory. Native
+identity, build sentinels, the normal build lock, live processes, descendant
+mounts and backing-file loop ownership are all checked before the one bounded
+recursive deletion. A pre-existing or ownership-unknown distro is never
+unregistered; a future provenance-proven project-created Ubuntu requires the
+literal confirmation `REMOVE`. Shared WSL features, host packages, other
+distros, release files, USB volumes and source are never cleanup targets.
+
+The normal builder's only behavioral addition is an atomic build-cycle record
+at `%LOCALAPPDATA%\4TW-OS\build-provenance.json`. It snapshots WSL/distro state
+before provisioning and is updated with exact host-changing invocations,
+resolved build/output identity and final release hash without replacing the
+original state during restart/resume. Optional VM-tool preparation now records
+whether its two direct packages pre-existed, but cleanup does not purge packages
+from a preserved Ubuntu environment.
+
+The current machine's real `--dry-run` verified the exported compressed SHA-256,
+found exactly one 19.1 GiB native build tree with zero project mounts or loop
+devices, classified the old no-provenance Ubuntu conservatively as unknown/keep,
+and listed 18.0 GiB of repository image duplicates. Dry-run created no state or
+log and removed nothing. Exact design and test limitations are in
+`docs/CLEANUP.md`.
+
 ## Keyboard-backlight source change (no IMG build)
 
 The shared Sway appliance layer now handles only the dedicated

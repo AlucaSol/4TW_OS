@@ -12,6 +12,7 @@ $Distro = 'Ubuntu-26.04'
 $StatePath = Join-Path $PSScriptRoot '.4tw-launcher-state.json'
 $ModulePath = Join-Path $PSScriptRoot 'build\windows-launcher.psm1'
 Import-Module $ModulePath -Force
+$ProvenancePath = $null
 
 function Write-4twBanner {
     param([string[]]$Lines)
@@ -140,6 +141,7 @@ function Get-4twWindowsFreeBytes {
 
 try {
     $RepositoryRoot = Assert-4twRepository $PSScriptRoot
+    $ProvenancePath = Get-4twProvenancePath
     $wslCommand = Get-Command 'wsl.exe' -ErrorAction SilentlyContinue
 
     if ($WindowsSetup) {
@@ -147,8 +149,27 @@ try {
         if ($null -eq $wslCommand) { $wslPath = Join-Path $env:SystemRoot 'System32\wsl.exe' }
         else { $wslPath = $wslCommand.Source }
         if ($WindowsSetup -eq 'InstallWsl') {
+            $featuresBefore = Get-4twOptionalFeatureStates
+            Set-4twProvenanceFields $ProvenancePath @{
+                wsl_install_invoked_by_4tw = $true
+                windows_features_before = $featuresBefore
+            } | Out-Null
             Write-Host 'Installing the official Windows Subsystem for Linux components...'
             $code = Invoke-4twLive $wslPath @('--install', '--no-distribution')
+            $featuresAfter = Get-4twOptionalFeatureStates
+            $featuresChanged = @()
+            foreach ($featureName in @('MicrosoftWindowsSubsystemLinux', 'VirtualMachinePlatform')) {
+                $beforeState = [string]$featuresBefore.$featureName
+                $afterState = [string]$featuresAfter.$featureName
+                if ($beforeState -match '^Disabled' -and $afterState -match '^(Enabled|EnablePending)') {
+                    $featuresChanged += $featureName
+                }
+            }
+            Set-4twProvenanceFields $ProvenancePath @{
+                wsl_install_completed = ($code -in @(0, 3010))
+                windows_features_after = $featuresAfter
+                windows_features_changed_by_4tw = $featuresChanged
+            } | Out-Null
             if ($code -eq 0) {
                 $childVersion = Invoke-4twCapture $wslPath @('--version')
                 $childStatus = Invoke-4twCapture $wslPath @('--status')
@@ -162,6 +183,7 @@ try {
             if ($outcome -eq 'Ready') { exit 0 }
             exit 1
         }
+        Set-4twProvenanceFields $ProvenancePath @{ wsl_update_invoked_by_4tw = $true } | Out-Null
         Write-Host 'Updating the official Windows Subsystem for Linux components...'
         $code = Invoke-4twLive $wslPath @('--update')
         if ((Get-4twWindowsSetupOutcome UpdateWsl $code) -eq 'Ready') { exit 0 }
@@ -173,6 +195,18 @@ try {
     $status = if ($null -eq $wslCommand) { [pscustomobject]@{ ExitCode = 1; Text = '' } }
         else { Invoke-4twCapture $wslCommand.Source @('--status') }
     $wslAction = Get-4twWslAction ($null -ne $wslCommand) $version.ExitCode $status.ExitCode
+    $wslBefore = if ($wslAction -eq 'Install') { 'Absent' } else { 'Present' }
+    $ubuntuBefore = if ($wslAction -eq 'Install') { 'Absent' } else { 'Unknown' }
+    $distrosBefore = @()
+    if ($wslAction -ne 'Install') {
+        $beforeList = Invoke-4twCapture $wslCommand.Source @('--list', '--verbose')
+        if ($beforeList.ExitCode -eq 0) {
+            $beforeDistros = @(ConvertFrom-4twWslList $beforeList.Text)
+            $distrosBefore = @($beforeDistros | ForEach-Object { $_.Name })
+            $ubuntuBefore = if ($distrosBefore -contains $Distro) { 'Present' } else { 'Absent' }
+        }
+    }
+    Initialize-4twProvenance $ProvenancePath $wslBefore $ubuntuBefore $distrosBefore $RepositoryRoot | Out-Null
     if ($wslAction -eq 'Install') {
         if (Test-Path -LiteralPath $StatePath -PathType Leaf) {
             try {
@@ -206,17 +240,29 @@ try {
         if ($online.ExitCode -ne 0 -or -not (Test-4twOnlineDistroAvailable $online.Text $Distro)) {
             throw 'Ubuntu-26.04 is not currently listed by the official WSL catalogue.'
         }
+        Set-4twProvenanceFields $ProvenancePath @{
+            ubuntu_install_invoked_by_4tw = $true
+        } | Out-Null
         Write-Host 'Installing Ubuntu 26.04 for WSL2. Existing distributions are not changed.'
         $code = Invoke-4twLive $wslPath @('--install', '--distribution', $Distro, '--no-launch')
         if ($code -ne 0) { throw 'Ubuntu-26.04 installation failed.' }
+        Set-4twProvenanceFields $ProvenancePath @{
+            ubuntu_installed_by_4tw = $true
+        } | Out-Null
         Show-4twUbuntuSetup $wslPath
         exit 0
     }
     if ($ubuntu.Version -eq 1) {
+        Set-4twProvenanceFields $ProvenancePath @{
+            ubuntu_version_before = 1
+        } | Out-Null
         Write-Host 'Converting only Ubuntu-26.04 from WSL1 to the required WSL2 format...'
         if ((Invoke-4twLive $wslPath @('--set-version', $Distro, '2')) -ne 0) {
             throw 'Ubuntu-26.04 could not be converted to WSL2.'
         }
+        Set-4twProvenanceFields $ProvenancePath @{
+            ubuntu_converted_to_wsl2_by_4tw = $true
+        } | Out-Null
     }
 
     $repoPath = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--',
@@ -237,6 +283,7 @@ try {
 
     $downloads = Get-4twDownloadsFolder
     $outputDirectory = Resolve-4twOutputDirectory $RepositoryRoot $downloads $env:USERPROFILE
+    Set-4twProvenanceFields $ProvenancePath @{ output_directory = $outputDirectory } | Out-Null
     $windowsMinimumBytes = 4GB
     $nativeMinimumBytes = 18GB
     $windowsFree = Get-4twWindowsFreeBytes $outputDirectory
@@ -256,11 +303,17 @@ try {
         if (-not (Test-4twWindowsEndpoint)) {
             throw 'Ubuntu package sources are not reachable; build-host dependencies were not downloaded.'
         }
+        Set-4twProvenanceFields $ProvenancePath @{
+            host_dependencies_install_invoked = $true
+        } | Out-Null
         Write-Host 'Installing the required Ubuntu build tools (QEMU is not included)...'
         if ((Invoke-4twLive $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
             '--', 'bash', 'build/run-wsl.sh', 'host-deps')) -ne 0) {
             throw 'Ubuntu build-host dependency setup failed.'
         }
+        Set-4twProvenanceFields $ProvenancePath @{
+            host_dependencies_install_completed = $true
+        } | Out-Null
     }
 
     $nativeResult = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
@@ -270,6 +323,20 @@ try {
     }
     try { $nativeBuild = Get-4twPathFromWslOutput $nativeResult.Text Unix }
     catch { throw 'The portable WSL build-user resolver did not return one safe native path.' }
+    if (-not (Test-4twNativeBuildPathFormat $nativeBuild)) {
+        throw 'The portable WSL build-user resolver returned a path outside the supported user-home layout.'
+    }
+    $selectedUserResult = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
+        '--', 'python3', 'build/resolve-native-build.py', '--user')
+    if ($selectedUserResult.ExitCode -ne 0) {
+        throw 'The portable WSL build-user resolver did not return one safe account name.'
+    }
+    try { $selectedWslUser = Get-4twUserFromWslOutput $selectedUserResult.Text }
+    catch { throw 'The portable WSL build-user resolver did not return one safe account name.' }
+    Set-4twProvenanceFields $ProvenancePath @{
+        selected_wsl_user = $selectedWslUser
+        native_build_directory = $nativeBuild
+    } | Out-Null
     $buildStatus = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
         '--', 'bash', 'build/run-wsl.sh', 'status')
     if ($buildStatus.ExitCode -eq 20) { throw $buildStatus.Text.Trim() }
@@ -326,6 +393,11 @@ try {
     Write-Host 'Copying the compressed release to Windows once, then hashing the Windows copy...'
     Save-4twState 'release-export'
     $export = Export-4twVerifiedRelease $releaseWindows $checksumWindows $outputDirectory
+    Set-4twProvenanceFields $ProvenancePath @{
+        output_directory = $outputDirectory
+        release_file = $export.Release
+        release_sha256 = $export.Hash
+    } | Out-Null
     if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
 
     Write-4twBanner @(

@@ -40,6 +40,16 @@ The compressed release, checksum and concise report are placed in
 in native WSL storage and is not copied to Windows. The launcher never selects,
 erases or writes a USB. See `docs/WINDOWS-BUILDER.md` for details.
 
+### Clean up after a source build
+
+After the finished Windows release has been created, double-click
+**`CLEANUP-4TW-OS.cmd`** to inspect and optionally remove the temporary build
+environment. It verifies and preserves the release in `Downloads\4TW-OS`
+before offering any deletion. A pre-existing or ownership-unknown Ubuntu/WSL
+installation is never unregistered. For a read-only preview, run
+`CLEANUP-4TW-OS.cmd --dry-run`. See `docs/CLEANUP.md` for the exact safety
+rules and retained items.
+
 ### Manual developer build from Windows 11
 
 Developers may run the tested stages individually. Open PowerShell in this repository's root

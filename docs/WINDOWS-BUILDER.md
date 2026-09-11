@@ -55,6 +55,16 @@ native WSL build directory. Rerunning the launcher does not wipe them. The
 package stage still authenticates Ubuntu/Mozilla repositories, indexes and
 package hashes; cached files merely avoid unnecessary downloads.
 
+Before making any host change, the launcher creates one build-cycle provenance
+record under `%LOCALAPPDATA%\4TW-OS\build-provenance.json`. Resumed runs retain
+the original before-build state rather than replacing it. The record includes
+WSL/Ubuntu presence, the installed distro list, any 4TW-initiated WSL install
+or update, elevated before/after optional-feature states when 4TW installs WSL,
+Ubuntu installation or WSL1-to-WSL2 conversion, host-dependency invocation,
+the selected Linux account/native directory, final output directory and final
+release hash. A completed cleanup permits a new build cycle to take a new
+before-state snapshot. No Wi-Fi credential or USB content is recorded.
+
 ## Pauses and resume
 
 Two one-time actions cannot safely be unattended:
@@ -133,3 +143,18 @@ the selected USB. Leave Secure Boot enabled on the target laptop.
 Microsoft's supported WSL command reference is at
 <https://learn.microsoft.com/windows/wsl/basic-commands> and installation
 guidance is at <https://learn.microsoft.com/windows/wsl/install>.
+
+## Removing the build environment
+
+`CLEANUP-4TW-OS.cmd` is the matching low-click cleanup entry point. It hashes
+the finished Windows release before inspecting or removing build data. It can
+remove the complete validated native build tree and generated IMG duplicates
+under this repository's ignored `artifacts` directory while retaining small
+diagnostic logs. Ubuntu unregistration is offered only when provenance proves
+that this build cycle started without Ubuntu-26.04 and the launcher then
+successfully installed that exact distro; it additionally requires the user to
+type `REMOVE`. Shared WSL features and other distributions are always retained.
+
+Use `CLEANUP-4TW-OS.cmd --dry-run` for a non-destructive inventory. Detailed
+provenance, mount/loop safety, legacy-build handling and disk-space behavior are
+documented in `CLEANUP.md`.

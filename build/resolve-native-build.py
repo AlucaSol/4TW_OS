@@ -101,9 +101,11 @@ def native_build_directory(account, is_dir=Path.is_dir, resolve=lambda path: pat
 def main():
     if os.geteuid() != 0:
         raise ResolutionError("run-wsl.sh and its build stages must be invoked as WSL root.")
+    if sys.argv[1:] not in ([], ["--user"]):
+        raise ResolutionError("usage: resolve-native-build.py [--user]")
     accounts = pwd.getpwall()
     account = choose_user(os.environ, accounts, wsl_default_user(), login_uid_bounds())
-    print(native_build_directory(account))
+    print(account.pw_name if sys.argv[1:] == ["--user"] else native_build_directory(account))
 
 
 if __name__ == "__main__":

@@ -36,6 +36,8 @@ try {
     $uncOutput = "wsl: diagnostic text`n\\wsl.localhost\Ubuntu-26.04\home\builder\image.img"
     Assert-Launcher ((Get-4twPathFromWslOutput $uncOutput Windows) -like '\\wsl.localhost\*') `
         'unrelated WSL diagnostics cannot contaminate a translated Windows path'
+    Assert-Launcher ((Get-4twUserFromWslOutput "wsl: diagnostic text`nwriter") -eq 'writer') `
+        'unrelated WSL diagnostics cannot contaminate the selected account name'
     $ambiguousPathStopped = $false
     try { Get-4twPathFromWslOutput "/one`n/two" Unix | Out-Null } catch { $ambiguousPathStopped = $true }
     Assert-Launcher $ambiguousPathStopped 'ambiguous WSL path output fails closed'
