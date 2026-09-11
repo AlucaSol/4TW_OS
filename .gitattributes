@@ -8,4 +8,5 @@ build/policy-rc.d text eol=lf
 rootfs-overlay/** text eol=lf
 *.png binary
 *.img binary
+*.zst binary
 *.deb binary

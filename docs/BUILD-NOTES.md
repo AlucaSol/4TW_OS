@@ -25,6 +25,34 @@ the next combined build.
 
 The implementation is self-contained in this repository. No BCLD source, previous BCLD artifact, internal disk, Windows EFI partition, BitLocker setting, or host firmware boot entry was changed.
 
+## Zstandard public release stage (no IMG rebuild)
+
+The low-click Windows builder now treats the raw IMG as an internal native-WSL
+artifact and adds two final release stages after exact IMG verification. The
+dedicated `build/compress-release.sh` stage rechecks the IMG against
+`verify-img`'s recorded hash, binds its output to that raw hash, runs
+`zstd -T0 -10`, tests the resulting stream, hashes it, and applies the strict
+GitHub Release check of less than 2,147,483,648 bytes. Windows then copies only
+the compressed release through a `.partial` filename and independently hashes
+that copy before publishing its final name.
+
+The existing verified 9 September raw IMG was used to exercise this stage; it
+was not rebuilt or modified. The result was 1,457,909,845 bytes (1.36 GiB),
+leaving about 658 MiB of headroom. `zstd --test` passed and both native WSL and
+Windows produced this compressed-file SHA-256:
+
+```text
+c7e94459d727650406dc39750960e37f5b32ab76d93dcd511bc13e8b42abe89f
+```
+
+The Windows public artifacts are in
+`%USERPROFILE%\Downloads\4TW-OS\`. This packaging test does not incorporate the
+pending keyboard-backlight source change into the 9 September IMG; the next
+normal launcher build will rebuild the source-changed raw IMG once, then run
+the new compression and export stages. No package stage, package download,
+rootfs configuration, IMG assembly, image edit or USB write was performed for
+this compression test.
+
 ## Public-launcher Release build
 
 The new `BUILD-4TW-OS.cmd` / `BUILD-4TW-OS.ps1` path completed one full Release

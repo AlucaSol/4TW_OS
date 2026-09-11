@@ -6,3 +6,5 @@ __pycache__/
 *.pyc
 .4tw-launcher-state.json
 output/
+*.img.zst
+*.img.zst.partial

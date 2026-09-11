@@ -19,6 +19,7 @@ try {
     [IO.Directory]::CreateDirectory((Join-Path $zipRoot 'assets')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $zipRoot 'build\run-wsl.sh'), '')
     [IO.File]::WriteAllText((Join-Path $zipRoot 'build\setup-host.sh'), '')
+    [IO.File]::WriteAllText((Join-Path $zipRoot 'build\compress-release.sh'), '')
     [IO.File]::WriteAllText((Join-Path $zipRoot 'assets\4TW-OS.png'), 'logo')
     $resolved = Assert-4twRepository $zipRoot
     Assert-Launcher ($resolved -eq $zipRoot) 'repository paths containing spaces work'
@@ -50,49 +51,64 @@ try {
     $failureSeen = $false
     try { Invoke-4twBuildRunner { 27 } | Out-Null } catch { $failureSeen = $_.Exception.Message -match 'exit code 27' }
     Assert-Launcher $failureSeen 'build-stage failure is surfaced and stops orchestration'
-    Assert-Launcher (-not (Test-4twFreeSpace 10GB 18GB)) 'insufficient disk space fails preflight'
+    Assert-Launcher (-not (Test-4twFreeSpace 3GB 4GB)) 'insufficient Windows release space fails preflight'
+    $belowLimit = Get-4twGitHubReleaseSize 2147483647
+    $atLimit = Get-4twGitHubReleaseSize 2147483648
+    Assert-Launcher ($belowLimit.Pass -and -not $atLimit.Pass) 'GitHub release size requires strictly less than 2 GiB'
 
     $downloads = Join-Path $temporary 'Downloads'
     $output = Resolve-4twOutputDirectory $zipRoot $downloads ''
     Assert-Launcher ($output -eq (Join-Path $downloads '4TW-OS')) 'Windows Downloads output is resolved without a username assumption'
 
-    $source = Join-Path $temporary 'source.img'
-    [IO.File]::WriteAllText($source, 'small simulated verified image')
+    $source = Join-Path $temporary 'source image.img.zst'
+    [IO.File]::WriteAllText($source, 'small simulated verified compressed image')
     $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
-    $checksum = Join-Path $temporary '4TW-OS_RELEASE.img.sha256'
-    [IO.File]::WriteAllText($checksum, "$hash  4TW-OS_RELEASE.img`n")
+    $checksum = Join-Path $temporary '4TW-OS_RELEASE.img.zst.sha256'
+    [IO.File]::WriteAllText($checksum, "$hash  4TW-OS_RELEASE.img.zst`n")
     Assert-Launcher (Test-4twChecksumMatch $source $hash) 'matching source checksum is accepted'
     Assert-Launcher (-not (Test-4twChecksumMatch $source ('0' * 64))) 'checksum mismatch is rejected'
-    $export = Export-4twVerifiedOutput $source $checksum $output '2026-01-02-030405'
-    Assert-Launcher ((Test-Path $export.Image) -and (Test-4twChecksumMatch $export.Image $hash) -and
-        (Test-Path $export.Report)) 'successful output is copied, rehashed and reported'
-    $firstWrite = (Get-Item -LiteralPath $export.Image).LastWriteTimeUtc
+    $export = Export-4twVerifiedRelease $source $checksum $output '2026-01-02-030405'
+    Assert-Launcher ((Test-Path $export.Release) -and (Test-4twChecksumMatch $export.Release $hash) -and
+        (Test-Path $export.Report) -and -not (Test-Path (Join-Path $output '4TW-OS_RELEASE.img'))) `
+        'successful compressed output is copied, rehashed and reported without a raw IMG'
+    $firstWrite = (Get-Item -LiteralPath $export.Release).LastWriteTimeUtc
     Start-Sleep -Milliseconds 20
-    $reused = Export-4twVerifiedOutput $source $checksum $output '2026-01-02-030406'
-    Assert-Launcher ((Get-Item -LiteralPath $reused.Image).LastWriteTimeUtc -eq $firstWrite) `
-        'an already matching Windows IMG is reused without another large copy'
+    $reused = Export-4twVerifiedRelease $source $checksum $output '2026-01-02-030406'
+    Assert-Launcher ((Get-Item -LiteralPath $reused.Release).LastWriteTimeUtc -eq $firstWrite) `
+        'an already matching Windows compressed release is reused without another large copy'
 
-    [IO.File]::WriteAllText($export.Image, 'older verified output placeholder')
+    [IO.File]::WriteAllText($export.Release, 'older verified output placeholder')
     [IO.Directory]::CreateDirectory((Join-Path $output 'previous')) | Out-Null
-    [IO.File]::WriteAllText((Join-Path $output 'previous\4TW-OS_RELEASE-obsolete.img'), 'obsolete')
-    $replacement = Export-4twVerifiedOutput $source $checksum $output '2026-01-02-030407'
-    $previousImages = @(Get-ChildItem -LiteralPath (Join-Path $output 'previous') -Filter '*.img')
-    Assert-Launcher (($previousImages.Count -eq 1) -and
-        ($previousImages[0].Name -eq '4TW-OS_RELEASE-2026-01-02-030407.img') -and
-        (Test-4twChecksumMatch $replacement.Image $hash)) `
-        'a replaced Windows IMG is archived with bounded one-image retention'
+    [IO.File]::WriteAllText((Join-Path $output 'previous\4TW-OS_RELEASE-obsolete.img.zst'), 'obsolete')
+    $replacement = Export-4twVerifiedRelease $source $checksum $output '2026-01-02-030407'
+    $previousReleases = @(Get-ChildItem -LiteralPath (Join-Path $output 'previous') -Filter '*.img.zst')
+    Assert-Launcher (($previousReleases.Count -eq 1) -and
+        ($previousReleases[0].Name -eq '4TW-OS_RELEASE-2026-01-02-030407.img.zst') -and
+        (Test-4twChecksumMatch $replacement.Release $hash)) `
+        'a replaced Windows release is archived with bounded retention'
 
     $badOutput = Join-Path $temporary 'bad export'
-    $badSource = Join-Path $temporary 'bad-source.img'
+    $badSource = Join-Path $temporary 'bad-source.img.zst'
     [IO.File]::WriteAllText($badSource, 'not the verified bytes')
     $mismatchStopped = $false
     try {
-        Export-4twVerifiedOutput $badSource $checksum $badOutput '2026-01-02-030408' | Out-Null
+        Export-4twVerifiedRelease $badSource $checksum $badOutput '2026-01-02-030408' | Out-Null
     } catch { $mismatchStopped = $_.Exception.Message -match 'remains unpublished' }
     Assert-Launcher ($mismatchStopped -and
-        -not (Test-Path (Join-Path $badOutput '4TW-OS_RELEASE.img')) -and
-        (Test-Path (Join-Path $badOutput '4TW-OS_RELEASE.img.partial'))) `
-        'a checksum mismatch never publishes an IMG under the Rufus-ready name'
+        -not (Test-Path (Join-Path $badOutput '4TW-OS_RELEASE.img.zst')) -and
+        (Test-Path (Join-Path $badOutput '4TW-OS_RELEASE.img.zst.partial'))) `
+        'a simulated post-copy checksum mismatch never publishes the Rufus-ready name'
+    [IO.File]::WriteAllText($badSource, 'small simulated verified compressed image')
+    $resumed = Export-4twVerifiedRelease $badSource $checksum $badOutput '2026-01-02-030409'
+    Assert-Launcher ((Test-4twChecksumMatch $resumed.Release $hash) -and
+        -not (Test-Path (Join-Path $badOutput '4TW-OS_RELEASE.img.zst.partial'))) `
+        'export resumes safely after a prior partial-copy failure'
+
+    $launcherText = Get-Content -Raw -LiteralPath (Join-Path $Project 'BUILD-4TW-OS.ps1')
+    Assert-Launcher ($launcherText.Contains('[6/6] Verifying and exporting the compressed release') -and
+        $launcherText.Contains('4TW-OS_RELEASE.img.zst directly') -and
+        -not $launcherText.Contains('Export-4twVerifiedOutput')) `
+        'success workflow presents the compressed release and no raw-IMG export'
 
     $forbiddenUser = 'jon' + 'be'
     $forbiddenWindowsRoot = 'C:' + [char]92 + 'Users' + [char]92

@@ -72,9 +72,9 @@ archive_previous_image() {
 
 run_stage() {
     local number=$1 label=$2 script=$3 log=$4
-    printf '\n[%s/4] %s\n' "$number" "$label"
+    printf '\n[%s/6] %s\n' "$number" "$label"
     if ! bash "$PROJECT/build/$script" 2>&1 | tee -a "$ARTIFACTS/$log"; then
-        echo "4TW-OS build stopped: [$number/4] $label failed." >&2
+        echo "4TW-OS build stopped: [$number/6] $label failed." >&2
         echo "Detailed log: $ARTIFACTS/$log" >&2
         return 1
     fi
@@ -103,4 +103,4 @@ if [[ $state != absent ]]; then
 fi
 run_stage 3 'Creating the writable Release USB image' build-img.sh build-img.log
 run_stage 4 'Verifying the exact Release image' verify-img.sh verify-img.log
-echo 'All four 4TW-OS Release stages completed successfully.'
+echo 'All four core 4TW-OS image stages completed successfully.'

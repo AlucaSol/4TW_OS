@@ -237,15 +237,16 @@ try {
 
     $downloads = Get-4twDownloadsFolder
     $outputDirectory = Resolve-4twOutputDirectory $RepositoryRoot $downloads $env:USERPROFILE
-    $minimumBytes = 18GB
+    $windowsMinimumBytes = 4GB
+    $nativeMinimumBytes = 18GB
     $windowsFree = Get-4twWindowsFreeBytes $outputDirectory
-    if (-not (Test-4twFreeSpace $windowsFree $minimumBytes)) {
-        throw ("The Windows output drive needs approximately 18 GiB free; available: {0:N1} GiB." -f ($windowsFree / 1GB))
+    if (-not (Test-4twFreeSpace $windowsFree $windowsMinimumBytes)) {
+        throw ("The Windows output drive needs approximately 4 GiB free; available: {0:N1} GiB." -f ($windowsFree / 1GB))
     }
     $wslSpace = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--', 'df', '-Pk', '/')
     if ($wslSpace.ExitCode -ne 0) { throw 'Could not check native WSL disk space.' }
     $nativeFree = ConvertFrom-4twDfAvailable $wslSpace.Text
-    if (-not (Test-4twFreeSpace $nativeFree $minimumBytes)) {
+    if (-not (Test-4twFreeSpace $nativeFree $nativeMinimumBytes)) {
         throw ("The native Ubuntu filesystem needs approximately 18 GiB free; available: {0:N1} GiB." -f ($nativeFree / 1GB))
     }
 
@@ -279,53 +280,81 @@ try {
             '--', 'bash', 'build/check-internet.sh')) -ne 0) {
             throw 'Required Ubuntu or Mozilla package sources are not reachable. No image build was started.'
         }
-        Write-Host 'Starting the resumable four-stage Release build.' -ForegroundColor Green
+        Write-Host 'Starting the resumable six-stage Release workflow.' -ForegroundColor Green
         Write-Host 'The first package preparation is normally the longest stage.'
         Invoke-4twBuildRunner {
             Invoke-4twLive $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
                 '--', 'bash', 'build/run-wsl.sh', 'all')
         } | Out-Null
     } else {
-        Write-Host 'A verified IMG already matches the current runtime source; no rebuild is needed.'
+        Write-Host 'The first four stages already have a verified IMG matching the current runtime source.'
     }
 
-    $nativeImage = "$nativeBuild/artifacts/4TW-OS_RELEASE.img"
-    $nativeChecksum = "$nativeBuild/artifacts/4TW-OS_RELEASE.img.sha256"
-    Write-Host 'Confirming the verified native IMG checksum before export...'
-    if ((Invoke-4twLive $wslPath @('-d', $Distro, '-u', 'root', '--cd',
-        "$nativeBuild/artifacts", '--', 'sha256sum', '--check', '4TW-OS_RELEASE.img.sha256')) -ne 0) {
-        throw 'The verified native IMG no longer matches its checksum; nothing was exported.'
+    $releaseStatus = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
+        '--', 'bash', 'build/run-wsl.sh', 'release-status')
+    if ($releaseStatus.ExitCode -eq 10) {
+        Write-Host '[5/6] Compressing release with Zstandard' -ForegroundColor Green
+        Write-Host 'Compressing 4TW-OS for distribution...'
+        Write-Host 'This may take several minutes.'
+        Save-4twState 'release-compression'
+        if ((Invoke-4twLive $wslPath @('-d', $Distro, '-u', 'root', '--cd', $repoWsl,
+            '--', 'bash', 'build/run-wsl.sh', 'release')) -ne 0) {
+            throw 'Release compression failed. The verified raw IMG and cache were preserved; rerun this launcher to resume.'
+        }
+    } elseif ($releaseStatus.ExitCode -eq 0) {
+        if ($buildStatus.ExitCode -eq 0) {
+            Write-Host '[5/6] Existing compressed release verified; compression is being reused.' -ForegroundColor Green
+        }
+    } elseif ($releaseStatus.ExitCode -eq 3) {
+        throw 'GitHub Release size check failed: the compressed artifact is not below 2 GiB.'
+    } else {
+        throw 'The compressed Release status could not be validated.'
     }
-    $imagePath = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--', 'wslpath', '-w', $nativeImage)
+
+    $nativeRelease = "$nativeBuild/artifacts/4TW-OS_RELEASE.img.zst"
+    $nativeChecksum = "$nativeBuild/artifacts/4TW-OS_RELEASE.img.zst.sha256"
+    $releasePath = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--', 'wslpath', '-w', $nativeRelease)
     $checksumPath = Invoke-4twCapture $wslPath @('-d', $Distro, '-u', 'root', '--', 'wslpath', '-w', $nativeChecksum)
-    if ($imagePath.ExitCode -ne 0 -or $checksumPath.ExitCode -ne 0) {
-        throw 'The verified native output could not be exposed to Windows.'
+    if ($releasePath.ExitCode -ne 0 -or $checksumPath.ExitCode -ne 0) {
+        throw 'The verified compressed output could not be exposed to Windows.'
     }
     try {
-        $imageWindows = Get-4twPathFromWslOutput $imagePath.Text Windows
+        $releaseWindows = Get-4twPathFromWslOutput $releasePath.Text Windows
         $checksumWindows = Get-4twPathFromWslOutput $checksumPath.Text Windows
-    } catch { throw 'Could not isolate the verified Windows output paths from WSL diagnostics.' }
-    Write-Host 'Copying the verified IMG to Windows once, then hashing it. This can take several minutes...'
-    $export = Export-4twVerifiedOutput $imageWindows $checksumWindows $outputDirectory
+    } catch { throw 'Could not isolate the verified compressed Windows paths from WSL diagnostics.' }
+    Write-Host '[6/6] Verifying and exporting the compressed release' -ForegroundColor Green
+    Write-Host 'Copying the compressed release to Windows once, then hashing the Windows copy...'
+    Save-4twState 'release-export'
+    $export = Export-4twVerifiedRelease $releaseWindows $checksumWindows $outputDirectory
     if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
 
     Write-4twBanner @(
         '             4TW-OS BUILD COMPLETE',
         '',
-        'Your verified USB image is ready:',
-        $export.Image,
+        'Your distributable 4TW-OS image is ready:',
+        $export.Release,
+        '',
+        ("Compressed size: {0:N2} GiB" -f $export.SizeGiB),
+        'GitHub Release size check: PASS',
+        ("Headroom: approximately {0:N0} MiB" -f $export.HeadroomMiB),
         '',
         'SHA-256:',
         $export.Hash,
         '',
-        'NEXT STEP:',
-        '1. Open Rufus from https://rufus.ie/',
-        '2. Select your USB drive.',
-        '3. Select 4TW-OS_RELEASE.img.',
-        '4. Write the image to the USB.',
+        'The release file has been verified after copying to Windows.',
         '',
-        'WARNING: Rufus will erase all data on the selected USB drive.',
-        'Please backup any important files before proceeding.',
+        'FOR NORMAL USERS:',
+        'Use Rufus 4.7 or newer.',
+        '1. Open Rufus.',
+        '2. Select your USB drive.',
+        '3. Select 4TW-OS_RELEASE.img.zst directly.',
+        '4. Click Start. Rufus decompresses it while flashing.',
+        '',
+        'WARNING: The selected USB will be erased.',
+        '',
+        'FOR PROJECT MAINTAINERS:',
+        'Upload 4TW-OS_RELEASE.img.zst and its .sha256 file',
+        'as GitHub Release assets, not as ordinary Git files.'
     )
     if (-not $NonInteractive) {
         Read-Host 'Press Enter to open the output folder' | Out-Null

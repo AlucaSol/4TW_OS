@@ -3,12 +3,12 @@ set -Eeuo pipefail
 
 packages=(
     ca-certificates coreutils curl debootstrap dosfstools e2fsprogs gdisk gnupg
-    grub-common mount python3 rsync sbsigntool udev util-linux
+    grub-common mount python3 rsync sbsigntool udev util-linux zstd
 )
 commands=(
     awk blkid chroot curl debootstrap e2fsck findmnt flock fsck.vfat gpg
     grub-script-check losetup mkfs.ext4 mkfs.vfat mount python3 rsync sbverify
-    setpriv sgdisk sha256sum udevadm
+    setpriv sgdisk sha256sum udevadm zstd
 )
 
 check_dependencies() {

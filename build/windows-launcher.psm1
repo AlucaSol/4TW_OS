@@ -81,7 +81,7 @@ function Get-4twUbuntuInitializationAction {
 
 function Assert-4twRepository {
     param([Parameter(Mandatory)][string]$RepositoryRoot)
-    $required = @('build\run-wsl.sh', 'build\setup-host.sh', 'assets\4TW-OS.png')
+    $required = @('build\run-wsl.sh', 'build\setup-host.sh', 'build\compress-release.sh', 'assets\4TW-OS.png')
     foreach ($relative in $required) {
         if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $relative) -PathType Leaf)) {
             throw "This is not a complete 4TW-OS source folder; missing $relative"
@@ -123,9 +123,14 @@ function ConvertFrom-4twDfAvailable {
 }
 
 function Read-4twChecksum {
-    param([Parameter(Mandatory)][string]$Path)
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][ValidateSet('4TW-OS_RELEASE.img', '4TW-OS_RELEASE.img.zst')]
+        [string]$ExpectedFileName
+    )
     $line = (Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction Stop).Trim()
-    if ($line -notmatch '^(?<Hash>[0-9a-fA-F]{64})\s+[ *]?4TW-OS_RELEASE\.img$') {
+    $escapedName = [regex]::Escape($ExpectedFileName)
+    if ($line -notmatch "^(?<Hash>[0-9a-fA-F]{64})\s+[ *]?$escapedName$") {
         throw 'The verified WSL checksum file has an unexpected format.'
     }
     return $Matches.Hash.ToLowerInvariant()
@@ -138,31 +143,47 @@ function Test-4twChecksumMatch {
         $ExpectedHash.ToLowerInvariant())
 }
 
-function Export-4twVerifiedOutput {
+function Get-4twGitHubReleaseSize {
+    param([long]$Bytes, [long]$LimitBytes = 2147483648)
+    return [pscustomobject]@{
+        Pass = ($Bytes -lt $LimitBytes)
+        Bytes = $Bytes
+        GiB = ($Bytes / 1GB)
+        HeadroomMiB = (($LimitBytes - $Bytes) / 1MB)
+    }
+}
+
+function Export-4twVerifiedRelease {
     param(
-        [Parameter(Mandatory)][string]$SourceImage,
+        [Parameter(Mandatory)][string]$SourceRelease,
         [Parameter(Mandatory)][string]$SourceChecksum,
         [Parameter(Mandatory)][string]$OutputDirectory,
         [string]$Timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd-HHmmss')
     )
-    $expected = Read-4twChecksum $SourceChecksum
+    $expected = Read-4twChecksum $SourceChecksum '4TW-OS_RELEASE.img.zst'
+    $sourceSize = (Get-Item -LiteralPath $SourceRelease -ErrorAction Stop).Length
+    $sizeStatus = Get-4twGitHubReleaseSize $sourceSize
+    if (-not $sizeStatus.Pass) {
+        throw 'GitHub Release size check failed: the compressed artifact is not below 2 GiB.'
+    }
     [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
-    $destinationImage = Join-Path $OutputDirectory '4TW-OS_RELEASE.img'
-    $partialImage = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.partial'
-    $destinationChecksum = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.sha256'
+    $destinationRelease = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.zst'
+    $partialRelease = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.zst.partial'
+    $destinationChecksum = Join-Path $OutputDirectory '4TW-OS_RELEASE.img.zst.sha256'
     $destinationReport = Join-Path $OutputDirectory 'VERIFICATION.txt'
     $destinationVerified = $false
-    if (Test-Path -LiteralPath $destinationImage -PathType Leaf) {
-        if (Test-4twChecksumMatch $destinationImage $expected) {
+    if (Test-Path -LiteralPath $destinationRelease -PathType Leaf) {
+        if (Test-4twChecksumMatch $destinationRelease $expected) {
             $destinationVerified = $true
         } else {
             $previous = Join-Path $OutputDirectory 'previous'
             [IO.Directory]::CreateDirectory($previous) | Out-Null
             Get-ChildItem -LiteralPath $previous -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -like '4TW-OS_RELEASE-*' } |
+                Where-Object { $_.Name -like '4TW-OS_RELEASE-*.img.zst*' -or
+                    $_.Name -like '4TW-OS_RELEASE-*-VERIFICATION.txt' } |
                 ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
-            $previousImage = Join-Path $previous "4TW-OS_RELEASE-$Timestamp.img"
-            Move-Item -LiteralPath $destinationImage -Destination $previousImage
+            $previousRelease = Join-Path $previous "4TW-OS_RELEASE-$Timestamp.img.zst"
+            Move-Item -LiteralPath $destinationRelease -Destination $previousRelease
             foreach ($old in @($destinationChecksum, $destinationReport)) {
                 if (Test-Path -LiteralPath $old -PathType Leaf) {
                     $previousMetadata = Join-Path $previous `
@@ -172,35 +193,42 @@ function Export-4twVerifiedOutput {
             }
         }
     }
-    if (-not (Test-Path -LiteralPath $destinationImage -PathType Leaf)) {
-        if (Test-Path -LiteralPath $partialImage) {
-            Remove-Item -LiteralPath $partialImage -Force
+    if (-not (Test-Path -LiteralPath $destinationRelease -PathType Leaf)) {
+        if (Test-Path -LiteralPath $partialRelease) {
+            Remove-Item -LiteralPath $partialRelease -Force
         }
-        Copy-Item -LiteralPath $SourceImage -Destination $partialImage -ErrorAction Stop
-        if (-not (Test-4twChecksumMatch $partialImage $expected)) {
-            throw 'The copied Windows IMG differs from the verified WSL checksum and remains unpublished as a .partial file.'
+        Copy-Item -LiteralPath $SourceRelease -Destination $partialRelease -ErrorAction Stop
+        if (-not (Test-4twChecksumMatch $partialRelease $expected)) {
+            throw 'The copied Windows release differs from the verified WSL checksum and remains unpublished as a .partial file.'
         }
-        Move-Item -LiteralPath $partialImage -Destination $destinationImage
+        Move-Item -LiteralPath $partialRelease -Destination $destinationRelease
         $destinationVerified = $true
     }
     if (-not $destinationVerified) {
-        throw 'The Windows IMG checksum differs from the verified WSL artifact.'
+        throw 'The Windows release checksum differs from the verified WSL artifact.'
     }
-    [IO.File]::WriteAllText($destinationChecksum, "$expected  4TW-OS_RELEASE.img`r`n",
+    [IO.File]::WriteAllText($destinationChecksum, "$expected  4TW-OS_RELEASE.img.zst`r`n",
         [Text.Encoding]::ASCII)
     $report = @(
-        '4TW-OS Release verification PASSED',
+        '4TW-OS compressed Release verification PASSED',
         "Exported UTC: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))",
+        "Compressed bytes: $sourceSize",
+        'Zstandard integrity test: PASS (native WSL artifact)',
+        'GitHub Release size check: PASS (under 2147483648 bytes)',
         "SHA-256: $expected",
-        'The Windows copy was hashed after export and matches the verified WSL artifact.',
-        'Flash 4TW-OS_RELEASE.img with Rufus. Rufus will erase the selected USB.'
+        'The Windows .img.zst copy was hashed after export and matches the verified WSL artifact.',
+        'Flash 4TW-OS_RELEASE.img.zst directly with Rufus 4.7 or newer; do not extract it first.',
+        'Rufus will erase the selected USB. This workflow does not export the raw IMG; its verified source remains in native WSL storage.'
     )
     [IO.File]::WriteAllLines($destinationReport, $report, [Text.Encoding]::UTF8)
     return [pscustomobject]@{
-        Image = $destinationImage
+        Release = $destinationRelease
         Checksum = $destinationChecksum
         Report = $destinationReport
         Hash = $expected
+        SizeBytes = $sourceSize
+        SizeGiB = $sizeStatus.GiB
+        HeadroomMiB = $sizeStatus.HeadroomMiB
     }
 }
 
@@ -208,7 +236,7 @@ function Invoke-4twBuildRunner {
     param([Parameter(Mandatory)][scriptblock]$Runner)
     $exitCode = & $Runner
     if ([int]$exitCode -ne 0) {
-        throw "The Linux build-all workflow failed with exit code $exitCode."
+        throw "The Linux Release workflow failed with exit code $exitCode."
     }
     return $true
 }

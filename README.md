@@ -6,25 +6,43 @@ Ubuntu 26.04 amd64 → Microsoft-signed Ubuntu shim → Canonical-signed GRUB an
 
 Firefox uses Mozilla's official APT repository, not Snap or a third-party browser build. There is no desktop environment, bar, launcher, file manager, terminal shortcut, SSH server, or general passwordless sudo. Closing Firefox or Sway requests shutdown; it does not open a shell.
 
-## Building 4TW-OS on Windows (beginner)
+## Install the latest release
 
-1. Download and extract this repository.
-2. Double-click **`BUILD-4TW-OS.cmd`**.
-3. Follow any one-time WSL or Ubuntu account-setup instructions it displays.
-4. If Windows must restart, restart it and double-click **`BUILD-4TW-OS.cmd`** again.
-5. Wait for **4TW-OS BUILD COMPLETE**.
-6. Use Rufus to write the resulting `4TW-OS_RELEASE.img` to the intended USB.
+1. Download `4TW-OS_RELEASE.img.zst` and
+   `4TW-OS_RELEASE.img.zst.sha256` from the latest GitHub Release.
+2. Download or open Rufus 4.7 or newer.
+3. Select the intended USB drive and select `4TW-OS_RELEASE.img.zst` directly.
+4. Click Start and wait for Rufus to decompress and write the image.
 
-The verified image, checksum and short report are placed in
-`Downloads\4TW-OS\`. The launcher does not select, erase or write a USB. A
-fresh machine can require one Windows Administrator approval, one restart and
-normal Ubuntu username/password creation. Progress survives those pauses; run
-the same launcher again. See `docs/WINDOWS-BUILDER.md` for details.
+**Do not extract the `.img.zst` first.** Rufus supports Zstandard-compressed
+disk images directly and decompresses the raw IMG while flashing. Confirm the
+selected USB carefully: it will be erased. The internal SSD must not be
+selected.
 
-## Manual/developer build from Windows 11
+## Release files versus repository files
 
-The low-click launcher is the normal public build route. Developers may still
-run the tested stages individually. Open PowerShell in this repository's root
+The Git repository contains source code, scripts, documentation and assets. It
+does not contain the generated release binary. GitHub Releases contain the
+public `4TW-OS_RELEASE.img.zst` and its `.sha256` file; maintainers must upload
+those as Release assets rather than commit them to ordinary Git history.
+
+## Building 4TW-OS from source
+
+Developers, contributors and people creating a custom build can download and
+extract this repository, then double-click **`BUILD-4TW-OS.cmd`**. Follow any
+one-time WSL or Ubuntu account-setup instructions and rerun the same CMD after
+a requested restart or setup pause. The launcher finishes all build,
+verification, compression and Windows-export stages without opening Ubuntu or
+running a separate command.
+
+The compressed release, checksum and concise report are placed in
+`Downloads\4TW-OS\`. The verified 16 GiB raw IMG remains an internal artifact
+in native WSL storage and is not copied to Windows. The launcher never selects,
+erases or writes a USB. See `docs/WINDOWS-BUILDER.md` for details.
+
+### Manual developer build from Windows 11
+
+Developers may run the tested stages individually. Open PowerShell in this repository's root
 (the directory containing this README, `build/` and `assets/`). You do not need
 an Ubuntu desktop. These commands call `Ubuntu-26.04` WSL2 directly and support
 repository paths containing spaces.
@@ -42,10 +60,11 @@ wsl.exe -d Ubuntu-26.04 -u root --cd $repoWsl -- bash build/run-wsl.sh all
 if ($LASTEXITCODE -ne 0) { throw 'Release build or verification failed' }
 ```
 
-`all` executes package preparation, configuration, IMG construction and exact
-IMG verification in order. It stops on the first failure. The `packages`,
-`configure`, `image` and `verify` dispatches remain available for diagnostics.
-Do not continue manually after a failed stage.
+`all` executes package preparation, configuration, IMG construction, exact IMG
+verification, and Zstandard release compression in order. It stops on the
+first failure. The `packages`, `configure`, `image`, `verify` and `release`
+dispatches remain available for diagnostics and safe resume. Do not continue
+manually after a failed stage.
 
 All build stages require WSL root because they create device nodes, chroot
 mounts, filesystems and loop devices. `run-wsl.sh` determines the non-root WSL
@@ -68,14 +87,14 @@ custom signing key or Ubuntu GUI is needed. Internet access is required when
 the authenticated package workflow needs current indexes or packages.
 
 Successful stages copy small logs and checksums back to `artifacts\`; they do
-not repeatedly copy the large sparse IMG. The public launcher exports the IMG
-once, and only after verification, to `Downloads\4TW-OS\` and hashes that
-Windows copy again. If runtime source changed, `all` safely archives the last
+not repeatedly copy the large sparse IMG or compressed `.img.zst`. The public
+launcher exports the compressed release once, and only after raw and compressed
+verification, to `Downloads\4TW-OS\` and hashes that Windows copy again. If runtime source changed, `all` safely archives the last
 verified native output under `artifacts/previous/` before constructing its
 replacement. It retains at most one previous image. An unverified existing IMG
 is never overwritten or presented as ready.
 
-The builder creates **one 16 GiB raw GPT disk image**, with a 256 MiB EFI partition, approximately 11.5 GiB ext4 system partition, 256 MiB FAT32 `4TW-CONFIG`, and approximately 4 GiB FAT32 `4TW-WRITING`. It is still one Ubuntu root filesystem, not two operating systems. No ISO is needed, and the image fits a nominal 32 GB USB.
+The builder creates **one 16 GiB raw GPT disk image**, with a 256 MiB EFI partition, approximately 11.5 GiB ext4 system partition, 256 MiB FAT32 `4TW-CONFIG`, and approximately 4 GiB FAT32 `4TW-WRITING`. It is still one Ubuntu root filesystem, not two operating systems. No ISO is needed, and the image fits a nominal 32 GB USB. The verified raw IMG is preserved in native WSL for development; `zstd -T0 -10` creates the smaller public `.img.zst` without changing it.
 
 Optional VM test tools were installed on the WSL host only. For another build host, `run-wsl.sh vm-tools` installs Ubuntu's QEMU/OVMF packages. They do not enter the USB image.
 
@@ -93,16 +112,16 @@ its absolute native-Linux `apt/archives` directory for the `packages` command.
 Only missing `.deb` files are copied; the source cache is never changed. An
 unset or missing optional cache is the normal fresh-clone case and is silent.
 
-## Flash and configure
+## Configure a flashed USB
 
 1. Verify the Windows file hash:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 -LiteralPath '.\artifacts\4TW-OS_RELEASE.img'
-   Get-Content -LiteralPath '.\artifacts\4TW-OS_RELEASE.img.sha256'
+   Get-FileHash -Algorithm SHA256 -LiteralPath '.\4TW-OS_RELEASE.img.zst'
+   Get-Content -LiteralPath '.\4TW-OS_RELEASE.img.zst.sha256'
    ```
 
-2. Use Rufus or another raw-disk-image writer. Select **only the intended 32 GB SanDisk**, select this `.img`, and use raw/DD writing if asked. Flashing erases that USB. Do not select the internal SSD.
+2. With Rufus 4.7 or newer, select **only the intended 32 GB SanDisk** and select the `.img.zst` directly. Do not extract it first. Flashing erases that USB. Do not select the internal SSD.
 3. Reinsert the USB into Windows. Open `4TW-CONFIG` and edit `4tw.cfg` in Notepad. If Windows offers to format an unfamiliar Linux or EFI partition, **cancel**. `4TW-WRITING` is the normal Windows-readable document volume.
 4. Supply the Base64 SSID/password on the USB only. Leave `start_url=https://4thewords.com/` unchanged unless another approved path is required. Keep `timezone=auto`, or enter a valid IANA name such as `timezone=Australia/Darwin` for a manual override. `keyboard_backlight=off` requests an initial off state when Linux exposes a standard keyboard LED; use `keep` to retain the firmware state. Do not add quotation marks around these values.
 5. Optionally edit `4tw-boot.cfg`: use `set default_mode="online"` or `set default_mode="offline"`. The five-second menu always keeps both choices; invalid/missing settings default Online. This change never requires a rebuild or reflash.
@@ -165,7 +184,7 @@ The integrated GPU is preferred when Linux reports it driving the internal panel
 
 The normal ext4 system, Firefox profile and FocusWriter emergency recovery state persist. Offline documents persist separately on `4TW-WRITING`. Startup tabs are not restored; Online opens only the configured URL. `/tmp`, `/var/tmp`, logs and browser cache use RAM; root uses `noatime`, and Firefox recovery-state writes are limited to five-minute intervals. There is no USB swap. Always shut down cleanly before removing power or the USB so the writable FAT32 filesystem is unmounted safely.
 
-For Ubuntu/Firefox updates, back up anything important and rebuild using the same four stages above. The packages stage refreshes signed indexes and installs current packages; configure regenerates initramfs and validates the kiosk; image copies the current signed boot chain. Reflash the new image, restore `4tw.cfg`, and log in again. Reflashing resets the old profile, so ensure writing has synced to 4thewords first. Automatic APT timers are intentionally disabled to avoid unattended writes during a writing session. There is no kiosk-admin shell or SSH path.
+For Ubuntu/Firefox updates, back up anything important and rebuild using the same five native stages above. The packages stage refreshes signed indexes and installs current packages; configure regenerates initramfs and validates the kiosk; image copies the current signed boot chain; verification gates Zstandard compression and Windows export. Reflash the new release, restore `4tw.cfg`, and log in again. Reflashing resets the old profile, so ensure writing has synced to 4thewords first. Automatic APT timers are intentionally disabled to avoid unattended writes during a writing session. There is no kiosk-admin shell or SSH path.
 
 `/usr/local/sbin/4tw-refresh-boot` exists for a future administrator doing offline maintenance of a mounted installation. It is not available through kiosk sudo and never changes NVRAM. Rebuilding is the documented update route.
 

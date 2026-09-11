@@ -16,6 +16,39 @@ b8b1a10766bc71166f9299f68680c08e980d8ba302ce8390518d3f4e19db9a53
 The copy in `%USERPROFILE%\Downloads\4TW-OS\` was independently hashed after
 export and matches this value.
 
+## Compressed public artifact
+
+The existing verified raw IMG above was compressed directly, without an IMG
+rebuild, using:
+
+```text
+zstd -T0 -10 --force 4TW-OS_RELEASE.img -o 4TW-OS_RELEASE.img.zst.partial
+```
+
+The temporary stream passed `zstd --test` before publication. The final
+compressed artifact is 1,457,909,845 bytes (1.36 GiB), which is strictly below
+2,147,483,648 bytes by approximately 658 MiB. Its SHA-256 is:
+
+```text
+c7e94459d727650406dc39750960e37f5b32ab76d93dcd511bc13e8b42abe89f
+```
+
+The file was copied once to
+`%USERPROFILE%\Downloads\4TW-OS\4TW-OS_RELEASE.img.zst`; Windows `Get-FileHash`
+returned the same value. Its adjacent `.sha256` file names the compressed file,
+and `VERIFICATION.txt` records the native integrity and post-copy checks. The
+raw IMG remains available inside native WSL. This compressed artifact contains
+the 9 September runtime described above, not the pending keyboard-backlight
+source change.
+
+Targeted release-builder tests passed for missing-host-dependency declaration,
+valid compression, corrupt-stream rejection, raw-hash stale-output rejection,
+the strict 2 GiB boundary, interrupted compression and export resume, Windows
+paths containing spaces, successful and mismatched post-copy hashing, ZIP
+checkouts without Git metadata, and absence of a hard-coded username. Modified
+shell scripts passed `bash -n` and ShellCheck; modified PowerShell passed parser
+and launcher tests.
+
 ## Pending keyboard-backlight change - configured rootfs only
 
 On 11 September, the source was synced to the existing native WSL build and
