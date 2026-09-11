@@ -1,4 +1,27 @@
-# Build notes - 9 September 2026
+# Build notes - 11 September 2026
+
+## Keyboard-backlight source change (no IMG build)
+
+The shared Sway appliance layer now handles only the dedicated
+`XF86KbdBrightnessDown` and `XF86KbdBrightnessUp` keysyms through a bounded,
+root-owned standard-LED helper. The helper dynamically detects
+`/sys/class/leds/*:kbd_backlight`, supports native discrete levels including
+zero, and reuses the existing five-second Mako notification. The strict CONFIG
+parser accepts `keyboard_backlight=off|keep`; `off` is the credential-free
+default and is a no-op when no recognised LED exists.
+
+The Ubuntu rootfs already contains the in-tree, signed `acer_wmi` from
+`linux-image-generic`; no package was added and `brightnessctl` is not needed.
+No third-party Acer/Nitro module, broad sysfs permission, general sudo command,
+terminal, panel or tray was added. The exact sudo additions are only the fixed
+helper's `up` and `down` operations. Plain F11/F12 and the existing LCD
+brightness bindings were not changed.
+
+Static tests and configured-rootfs validation for this source-only change are
+recorded in `docs/KEYBOARD-BACKLIGHT.md` and `docs/VERIFICATION.md`. Per the
+task constraint, `build-img.sh` was not run and the previously verified IMG
+was not modified. Physical Nitro V16S AI LED/event support remains deferred to
+the next combined build.
 
 The implementation is self-contained in this repository. No BCLD source, previous BCLD artifact, internal disk, Windows EFI partition, BitLocker setting, or host firmware boot entry was changed.
 

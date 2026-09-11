@@ -1,0 +1,14 @@
+#!/usr/bin/python3 -I
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from appliance import keyboard_backlight_diagnostics, set_keyboard_backlight
+
+if len(sys.argv) != 2 or sys.argv[1] not in {"up", "down", "off", "status"}:
+    raise SystemExit(2)
+if sys.argv[1] == "status":
+    print(keyboard_backlight_diagnostics())
+    raise SystemExit(0)
+value = set_keyboard_backlight(sys.argv[1])
+if value is None:
+    raise SystemExit(1)
+print(value)

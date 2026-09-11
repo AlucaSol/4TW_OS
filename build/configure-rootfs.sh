@@ -62,6 +62,7 @@ done
 inroot visudo -cf /etc/sudoers
 inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/rtc_clock.py \
     /usr/local/lib/4tw/timezone_provider.py \
+    /usr/local/bin/4tw-keyboard-brightness /usr/local/sbin/4tw-keyboard-backlight \
     /usr/local/libexec/4tw-online /usr/local/libexec/4tw-typewriter
 python3 "$PROJECT/tests/test_helpers.py"
 python3 "$PROJECT/tests/test_timezone.py"
@@ -80,9 +81,11 @@ inroot runuser -u kiosk -- env XDG_RUNTIME_DIR=/run/4tw-sway-test WLR_BACKENDS=h
     dbus-run-session -- python3 /run/4tw-sway-test/focuswriter-smoke.py | tee "$ARTIFACTS/focuswriter-smoke.json"
 inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-poweroff
 inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-backlight up
+inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-keyboard-backlight up
+inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-keyboard-backlight down
 inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-retry-wifi
 inroot runuser -u kiosk -- sudo -n -l /usr/local/sbin/4tw-enter-offline
-for request in '/usr/bin/systemctl poweroff' '/bin/sh' '/usr/local/sbin/4tw-backlight default' '/usr/local/sbin/4tw-poweroff extra' '/usr/local/sbin/4tw-retry-wifi extra' '/usr/local/sbin/4tw-enter-offline extra'; do
+for request in '/usr/bin/systemctl poweroff' '/bin/sh' '/usr/local/sbin/4tw-backlight default' '/usr/local/sbin/4tw-keyboard-backlight off' '/usr/local/sbin/4tw-keyboard-backlight status' '/usr/local/sbin/4tw-keyboard-backlight up extra' '/usr/local/sbin/4tw-poweroff extra' '/usr/local/sbin/4tw-retry-wifi extra' '/usr/local/sbin/4tw-enter-offline extra'; do
     read -ra args <<< "$request"
     if inroot runuser -u kiosk -- sudo -n -l "${args[@]}"; then
         echo "Unexpected sudo permission: $request" >&2; exit 1

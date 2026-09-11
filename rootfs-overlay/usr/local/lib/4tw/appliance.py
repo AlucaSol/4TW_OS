@@ -30,6 +30,9 @@ NETWORK_UUID = "2d5b597a-e4aa-4499-8b09-7ba9ec67508d"
 UTC_ZONE = "Etc/UTC"
 SYS_POWER = Path("/sys/class/power_supply")
 SYS_BACKLIGHT = Path("/sys/class/backlight")
+SYS_LEDS = Path("/sys/class/leds")
+SYS_INPUT = Path("/sys/class/input")
+SYS_MODULE = Path("/sys/module")
 SYS_PCI = Path("/sys/bus/pci/devices")
 SYS_DRM = Path("/sys/class/drm")
 DEV_DRI = Path("/dev/dri")
@@ -390,6 +393,121 @@ def set_backlight(action, root=SYS_BACKLIGHT):
     return percent
 
 
+def _keyboard_led_rank(name):
+    """Recognise only keyboard-light LED names, never arbitrary LEDs."""
+    lowered = name.lower()
+    function = lowered.rsplit(":", 1)[-1]
+    if function == "kbd_backlight":
+        return 0
+    if function.startswith("kbd_zoned_backlight-"):
+        return 1
+    normalised = lowered.replace("-", "_")
+    if "keyboard_backlight" in normalised or "kbd_backlight" in normalised:
+        return 2
+    if "keyboard" in lowered and any(word in lowered for word in ("light", "illum", "rgb")):
+        return 3
+    return None
+
+
+def keyboard_backlight_info(root=SYS_LEDS):
+    """Find one standards-style keyboard LED without assuming its device name."""
+    devices = []
+    try:
+        candidates = root.iterdir()
+    except OSError:
+        return None
+    for device in candidates:
+        rank = _keyboard_led_rank(device.name)
+        if rank is None:
+            continue
+        maximum = number(device / "max_brightness")
+        current = number(device / "brightness")
+        if (maximum is None or current is None or maximum < 1 or
+                not maximum.is_integer() or not current.is_integer() or current > maximum):
+            continue
+        devices.append((rank, device.name, device, int(current), int(maximum)))
+    if not devices:
+        return None
+    _rank, name, device, current, maximum = sorted(devices, key=lambda item: (item[0], item[1]))[0]
+    return {"name": name, "path": device, "current": current, "maximum": maximum,
+            "percent": round(current * 100 / maximum)}
+
+
+def keyboard_backlight_target(current, maximum, action):
+    if action not in {"up", "down", "off"} or maximum < 1 or not 0 <= current <= maximum:
+        raise ValueError("Invalid keyboard backlight request")
+    current, maximum = int(current), int(maximum)
+    step = 1 if maximum <= 10 else math.ceil(maximum / 10)
+    if action == "off":
+        value = 0
+    elif action == "up":
+        value = min(maximum, current + step)
+    else:
+        value = max(0, current - step)
+    return value, round(value * 100 / maximum)
+
+
+def set_keyboard_backlight(action, root=SYS_LEDS):
+    """Apply one bounded operation to the detected keyboard LED only."""
+    if action not in {"up", "down", "off"}:
+        raise ValueError("Invalid keyboard backlight request")
+    info = keyboard_backlight_info(root)
+    if info is None:
+        return None
+    value, percent = keyboard_backlight_target(info["current"], info["maximum"], action)
+    try:
+        (info["path"] / "brightness").write_text(str(value))
+    except OSError:
+        return None
+    return percent
+
+
+def _input_keyboard_light_capabilities(root=SYS_INPUT):
+    key_names = {228: "KEY_KBDILLUMTOGGLE", 229: "KEY_KBDILLUMDOWN", 230: "KEY_KBDILLUMUP"}
+    results = []
+    try:
+        events = sorted(root.glob("event*"), key=lambda path: path.name)
+    except OSError:
+        events = []
+    for event in events:
+        try:
+            raw = (event / "device/capabilities/key").read_text().strip()
+            if not raw or not re.fullmatch(r"[0-9a-fA-F, ]+", raw):
+                continue
+            bitmap = int(raw.replace(" ", "").replace(",", ""), 16)
+            supported = [name for code, name in key_names.items() if bitmap & (1 << code)]
+            if not supported:
+                continue
+            device_name = (event / "device/name").read_text().strip()
+        except (OSError, ValueError):
+            continue
+        device_name = "".join(character if character.isprintable() else "?" for character in device_name)[:120]
+        results.append(f"{event.name} ({device_name or 'unnamed'}): {', '.join(supported)}")
+    return results
+
+
+def keyboard_backlight_diagnostics(led_root=SYS_LEDS, input_root=SYS_INPUT, module_root=SYS_MODULE):
+    """Return a read-only, fixed-purpose report for physical hardware testing."""
+    lines = ["Acer WMI: " + ("loaded" if (module_root / "acer_wmi").is_dir() else "unavailable")]
+    try:
+        led_names = sorted(path.name for path in led_root.iterdir())
+    except OSError:
+        led_names = []
+    lines.append("Keyboard LED devices:")
+    lines.extend("    " + name for name in led_names) if led_names else lines.append("    unavailable")
+    lines.append("Relevant input devices:")
+    inputs = _input_keyboard_light_capabilities(input_root)
+    lines.extend("    " + item for item in inputs) if inputs else lines.append("    unavailable")
+    info = keyboard_backlight_info(led_root)
+    lines.append("Keyboard backlight:")
+    if info is None:
+        lines.append("    unavailable")
+    else:
+        lines.extend(("    supported", "    device: " + info["name"],
+                      f"    current level: {info['current']}", f"    maximum level: {info['maximum']}"))
+    return "\n".join(lines)
+
+
 def permitted_url(url, patterns):
     if not isinstance(url, str) or len(url) > 4096 or any(ord(c) < 33 or ord(c) == 127 for c in url):
         return False
@@ -690,7 +808,7 @@ def parse_config(text, patterns, zoneinfo_root=ZONEINFO):
             continue
         key, separator, value = line.partition("=")
         key, value = key.strip(), value.strip()
-        if not separator or key not in {"wifi_ssid_b64", "wifi_psk_b64", "start_url", "timezone"} or key in values:
+        if not separator or key not in {"wifi_ssid_b64", "wifi_psk_b64", "start_url", "timezone", "keyboard_backlight"} or key in values:
             raise ValueError("Unsupported or duplicate configuration key")
         values[key] = value
     url = values.get("start_url") or DEFAULT_URL
@@ -714,7 +832,10 @@ def parse_config(text, patterns, zoneinfo_root=ZONEINFO):
     if not timezone:
         # An invalid manual value cannot be applied; retain normal auto mode.
         timezone = "auto"
-    return url, ssid, psk, timezone
+    keyboard_backlight = values.get("keyboard_backlight", "off")
+    if keyboard_backlight not in {"off", "keep"}:
+        raise ValueError("Invalid keyboard backlight setting")
+    return url, ssid, psk, timezone, keyboard_backlight
 
 
 def nm_keyfile(ssid, psk):
@@ -737,17 +858,21 @@ def configure_runtime():
     except OSError:
         mode = "online"
     _write_runtime(APPLIANCE_MODE, mode)
-    url, ssid, psk, timezone = DEFAULT_URL, b"", "", "auto"
+    url, ssid, psk, timezone, keyboard_backlight = DEFAULT_URL, b"", "", "auto", "off"
     try:
         patterns = json.loads(Path("/etc/4tw/allowed-sites.json").read_text())
         with Path("/config/4tw.cfg").open(encoding="utf-8-sig") as handle:
             text = handle.read(16385)
-        url, ssid, psk, timezone = parse_config(text, patterns)
+        url, ssid, psk, timezone, keyboard_backlight = parse_config(text, patterns)
     except (OSError, ValueError, UnicodeError):
         # Never print the input or a decoder exception containing credentials.
         print("4TW-OS: configuration unavailable or invalid; using safe defaults.", flush=True)
     _write_runtime(runtime / "start-url", url)
     _write_runtime(TIMEZONE_MODE, timezone)
+    _write_runtime(runtime / "keyboard-backlight", keyboard_backlight)
+    if keyboard_backlight == "off":
+        # Absence of a recognised standard LED is a safe no-op.
+        set_keyboard_backlight("off")
     applied_zone, applied = prepare_timezone(timezone)
     if not applied:
         print("4TW-OS: could not apply timezone " + applied_zone + "; continuing kiosk startup.", flush=True)

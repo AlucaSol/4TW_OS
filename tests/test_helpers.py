@@ -153,6 +153,63 @@ class Helpers(unittest.TestCase):
             self.assertEqual(appliance.set_backlight("up", root), 100)
             self.assertEqual((dev / "brightness").read_text(), "1000")
 
+    def test_keyboard_backlight_native_steps_clamp_and_off(self):
+        self.assertEqual(appliance.keyboard_backlight_target(2, 3, "up"), (3, 100))
+        self.assertEqual(appliance.keyboard_backlight_target(3, 3, "up"), (3, 100))
+        self.assertEqual(appliance.keyboard_backlight_target(2, 3, "down"), (1, 33))
+        self.assertEqual(appliance.keyboard_backlight_target(1, 3, "down"), (0, 0))
+        self.assertEqual(appliance.keyboard_backlight_target(2, 3, "off"), (0, 0))
+        self.assertEqual(appliance.keyboard_backlight_target(128, 255, "up"), (154, 60))
+        with self.assertRaises(ValueError):
+            appliance.keyboard_backlight_target(1, 3, "/bin/sh")
+
+    def test_keyboard_backlight_detects_only_keyboard_led(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name, current, maximum in (("input3::capslock", 1, 1), ("acer::mail", 1, 1),
+                                           ("platform::kbd_backlight", 2, 3)):
+                device = root / name
+                device.mkdir()
+                (device / "brightness").write_text(str(current))
+                (device / "max_brightness").write_text(str(maximum))
+            info = appliance.keyboard_backlight_info(root)
+            self.assertEqual(info["name"], "platform::kbd_backlight")
+            self.assertEqual(appliance.set_keyboard_backlight("down", root), 33)
+            self.assertEqual((root / "platform::kbd_backlight/brightness").read_text(), "1")
+            self.assertEqual((root / "input3::capslock/brightness").read_text(), "1")
+            self.assertEqual(appliance.set_keyboard_backlight("off", root), 0)
+            self.assertEqual((root / "platform::kbd_backlight/brightness").read_text(), "0")
+            with self.assertRaises(ValueError):
+                appliance.set_keyboard_backlight("../../tmp/unsafe", root)
+
+    def test_keyboard_backlight_missing_and_diagnostics(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            leds, inputs, modules = root / "leds", root / "input", root / "modules"
+            leds.mkdir()
+            inputs.mkdir()
+            modules.mkdir()
+            self.assertIsNone(appliance.set_keyboard_backlight("up", leds))
+            report = appliance.keyboard_backlight_diagnostics(leds, inputs, modules)
+            self.assertIn("Acer WMI: unavailable", report)
+            self.assertIn("Keyboard backlight:\n    unavailable", report)
+
+            (modules / "acer_wmi").mkdir()
+            device = leds / "acer:rgb:kbd_backlight"
+            device.mkdir()
+            (device / "brightness").write_text("3")
+            (device / "max_brightness").write_text("3")
+            event = inputs / "event8/device"
+            (event / "capabilities").mkdir(parents=True)
+            (event / "name").write_text("Acer WMI hotkeys")
+            (event / "capabilities/key").write_text(hex((1 << 229) | (1 << 230))[2:])
+            report = appliance.keyboard_backlight_diagnostics(leds, inputs, modules)
+            self.assertIn("Acer WMI: loaded", report)
+            self.assertIn("acer:rgb:kbd_backlight", report)
+            self.assertIn("KEY_KBDILLUMDOWN, KEY_KBDILLUMUP", report)
+            self.assertIn("current level: 3", report)
+            self.assertIn("maximum level: 3", report)
+
     def test_allowed_and_denied_urls(self):
         for url in ("https://4thewords.com/", "https://www.4thewords.com/write", "https://api.4thewords.com/path?q=x"):
             self.assertTrue(appliance.permitted_url(url, ALLOW))
@@ -164,10 +221,11 @@ class Helpers(unittest.TestCase):
 
     def test_default_config_is_credential_free(self):
         self.assertEqual(appliance.parse_config((PROJECT / "config/4tw.cfg").read_text(), ALLOW),
-                         ("https://4thewords.com/", b"", "", "auto"))
+                         ("https://4thewords.com/", b"", "", "auto", "off"))
 
     def test_config_key_validation(self):
-        for value in ("command=sh", "wifi_ssid_b64=\nwifi_ssid_b64=", "start_url=https://example.com/", "wifi_ssid_b64=%%", "no equals"):
+        for value in ("command=sh", "wifi_ssid_b64=\nwifi_ssid_b64=", "start_url=https://example.com/",
+                      "wifi_ssid_b64=%%", "keyboard_backlight=/bin/sh", "no equals"):
             with self.assertRaises(ValueError):
                 appliance.parse_config(value, ALLOW)
 
@@ -175,10 +233,11 @@ class Helpers(unittest.TestCase):
         ssid = b"$(touch /tmp/unsafe);wifi"
         psk = "pass;$(id)\\ word"
         config = "wifi_ssid_b64=" + base64.b64encode(ssid).decode() + "\nwifi_psk_b64=" + base64.b64encode(psk.encode()).decode()
-        url, decoded_ssid, decoded_psk, timezone = appliance.parse_config(config, ALLOW)
+        url, decoded_ssid, decoded_psk, timezone, keyboard_backlight = appliance.parse_config(config, ALLOW)
         self.assertEqual(decoded_ssid, ssid)
         self.assertEqual(decoded_psk, psk)
         self.assertEqual(timezone, "auto")
+        self.assertEqual(keyboard_backlight, "off")
         keyfile = appliance.nm_keyfile(decoded_ssid, decoded_psk)
         self.assertIn("psk=pass;$(id)\\\\\\sword", keyfile)
         self.assertNotIn("ssid=$(", keyfile)
@@ -190,11 +249,15 @@ class Helpers(unittest.TestCase):
             zone.parent.mkdir()
             zone.write_bytes(b"TZif")
             parsed = appliance.parse_config("timezone=Australia/Darwin", ALLOW, zoneinfo)
-            self.assertEqual(parsed[-1], "Australia/Darwin")
+            self.assertEqual(parsed[-2], "Australia/Darwin")
             for value in ("../../etc/passwd", "/etc/passwd", "Australia/../Darwin",
                           "$(touch /tmp/unsafe)", "Australia/Darwin;sh", "Not/AZone"):
                 parsed = appliance.parse_config("timezone=" + value, ALLOW, zoneinfo)
-                self.assertEqual(parsed[-1], "auto", value)
+                self.assertEqual(parsed[-2], "auto", value)
+
+    def test_keyboard_backlight_config_is_fixed_data(self):
+        self.assertEqual(appliance.parse_config("keyboard_backlight=keep", ALLOW)[-1], "keep")
+        self.assertEqual(appliance.parse_config("keyboard_backlight=off", ALLOW)[-1], "off")
 
 
 if __name__ == "__main__":

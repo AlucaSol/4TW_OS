@@ -19,6 +19,11 @@ override; manual mode makes no timezone-provider request. Restore auto after
 travel if you want detection again. Windows owns the laptop hardware clock;
 4TW-OS reads it at boot but never writes or synchronises it.
 
+keyboard_backlight=off turns off a detected standard Linux keyboard-backlight
+LED at startup. The keyboard illumination-up key can turn it on again. Use
+keyboard_backlight=keep to leave the firmware's existing state unchanged.
+This setting is ignored safely when the hardware exposes no recognised LED.
+
 The separate 4tw-boot.cfg controls only the boot menu's automatic choice:
 
 set default_mode="online"

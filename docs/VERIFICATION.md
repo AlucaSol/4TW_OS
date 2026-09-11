@@ -3,7 +3,9 @@
 The current deliverable is `artifacts/4TW-OS_RELEASE.img`
 (17,179,869,184 bytes). It was built once by the canonical four-stage Release
 workflow and inspected from the actual final IMG. It includes the
-Windows-owned/no-write RTC policy and all current dual-mode runtime source.
+Windows-owned/no-write RTC policy and the dual-mode runtime source through its
+9 September build. The keyboard-backlight source change below is intentionally
+not in this IMG yet.
 
 Final SHA-256:
 
@@ -13,6 +15,32 @@ b8b1a10766bc71166f9299f68680c08e980d8ba302ce8390518d3f4e19db9a53
 
 The copy in `%USERPROFILE%\Downloads\4TW-OS\` was independently hashed after
 export and matches this value.
+
+## Pending keyboard-backlight change - configured rootfs only
+
+On 11 September, the source was synced to the existing native WSL build and
+the canonical `configure` stage was run. It completed with the existing
+package cache and explicitly stopped after configured-rootfs validation; no
+`image` or `verify` stage was invoked, and the verified IMG above was not
+replaced.
+
+The configured rootfs passed:
+
+- 21 helper tests, including standard keyboard-LED selection, rejection of
+  Caps Lock/mail LEDs, discrete and proportional stepping, zero/Off clamping,
+  unavailable hardware, fixed diagnostic output, config validation and
+  rejection of arbitrary operations;
+- Sway's own syntax validator for the shared, Online and Offline configs;
+- exact sudo allow checks for keyboard `up`/`down` and deny checks for `off`,
+  `status`, extra arguments, shells and general commands;
+- all existing rootfs, RTC, timezone, dual-mode, portability, FocusWriter and
+  Firefox policy/navigation regression checks.
+
+Inspection confirmed the installed Ubuntu kernel is
+`linux-image-generic 7.0.0-31.31`; its in-tree `acer_wmi.ko.zst` is PKCS#7
+signed. `brightnessctl` is not installed, no package manifest or Secure Boot
+builder changed, and no third-party Acer module was added. Exact implementation
+and deferred physical checks are in `docs/KEYBOARD-BACKLIGHT.md`.
 
 ## RTC no-write validation - final IMG
 
@@ -104,7 +132,7 @@ drive. `artifacts/verify-img.log` records these checks:
 
 ## Pre-image runtime tests
 
-`tests/test_helpers.py`: **17 tests passed**, covering capacity-only/missing batteries, power/current conversions, measured-rate runtime estimates, dGPU states, internal-panel GPU selection, conservative NVIDIA/CPU/USB policy, invalid fields, brightness steps/clamps, integer sysfs writes, URL validation, Base64 validation, duplicate/unknown keys, validated timezone configuration and shell-like text treated only as data.
+`tests/test_helpers.py`: **21 tests passed**, covering capacity-only/missing batteries, power/current conversions, measured-rate runtime estimates, dGPU states, internal-panel GPU selection, conservative NVIDIA/CPU/USB policy, invalid fields, LCD and keyboard-light steps/clamps, safe keyboard-LED selection, unavailable-hardware diagnostics, integer sysfs writes, URL validation, Base64 validation, duplicate/unknown keys, validated timezone/keyboard-light configuration and shell-like text treated only as data.
 
 `tests/test_timezone.py`: **8 tests passed**, covering the fixed HTTPS endpoint and four-second timeout, one minimal request, rejected redirects, provider timeout/unavailability, malformed JSON/HTML/multiple lines/invalid UTF-8/oversized responses, installed-zone validation, direct zoneinfo-file application without a clock command, last-known/UTC startup fallback, unchanged-state write avoidance, invalid-response state preservation, one-attempt-per-boot behaviour, and proof that manual mode never invokes the provider.
 

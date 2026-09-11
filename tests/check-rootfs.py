@@ -44,10 +44,15 @@ expected = {
     "bindsym --inhibited --no-repeat Ctrl+Mod1+b exec /usr/local/bin/4tw-battery",
     "bindsym --inhibited Ctrl+Mod1+Left exec /usr/local/bin/4tw-brightness down",
     "bindsym --inhibited Ctrl+Mod1+Right exec /usr/local/bin/4tw-brightness up",
+    "bindsym --inhibited XF86KbdBrightnessDown exec /usr/local/bin/4tw-keyboard-brightness down",
+    "bindsym --inhibited XF86KbdBrightnessUp exec /usr/local/bin/4tw-keyboard-brightness up",
     "bindsym --inhibited --no-repeat Ctrl+Mod1+Delete exec /usr/bin/sudo -n /usr/local/sbin/4tw-poweroff",
 }
 check({line for line in active if " exec " in line or line.startswith("exec ")} == expected,
-      "only four fixed global appliance controls are executable in shared Sway")
+      "only the six fixed global appliance controls are executable in shared Sway")
+check("XF86MonBrightness" not in sway and "XF86KbdBrightness" in sway and
+      "F11 exec" not in sway and "F12 exec" not in sway,
+      "keyboard illumination keys are distinct from LCD and ordinary F11/F12 bindings")
 check(online_active[0] == "include /etc/4tw/sway.conf" and
       {line for line in online_active if line.startswith("exec ")} == {"exec /usr/local/libexec/4tw-online"},
       "Online mode includes only the shared controls and fixed Online launcher")
@@ -96,10 +101,11 @@ check('"Homepage"' not in json.dumps(policy), "no redundant homepage launch poli
 check("/usr/bin/sudo -n /usr/local/sbin/4tw-poweroff" in read("/usr/local/libexec/4tw-session") and '"/usr/local/sbin/4tw-poweroff"' in browser,
       "browser/compositor exit requests poweroff, never falls into a shell")
 sudoers = read("/etc/sudoers.d/4tw-kiosk")
-check('NOPASSWD: /usr/local/sbin/4tw-poweroff "", /usr/local/sbin/4tw-backlight up, /usr/local/sbin/4tw-backlight down, /usr/local/sbin/4tw-retry-wifi "", /usr/local/sbin/4tw-enter-offline ""' in sudoers,
-      "passwordless privileges limited to exact appliance shutdown, brightness, Wi-Fi retry and Offline transition")
-for path in ("usr/local/bin/4tw-battery", "usr/local/bin/4tw-brightness", "usr/local/bin/4tw-select-gpu",
-             "usr/local/bin/4tw-power-status", "usr/local/sbin/4tw-backlight", "usr/local/sbin/4tw-poweroff",
+check('NOPASSWD: /usr/local/sbin/4tw-poweroff "", /usr/local/sbin/4tw-backlight up, /usr/local/sbin/4tw-backlight down, /usr/local/sbin/4tw-keyboard-backlight up, /usr/local/sbin/4tw-keyboard-backlight down, /usr/local/sbin/4tw-retry-wifi "", /usr/local/sbin/4tw-enter-offline ""' in sudoers,
+      "passwordless privileges limited to exact appliance shutdown, display/keyboard brightness, Wi-Fi retry and Offline transition")
+for path in ("usr/local/bin/4tw-battery", "usr/local/bin/4tw-brightness", "usr/local/bin/4tw-keyboard-brightness",
+             "usr/local/bin/4tw-select-gpu", "usr/local/bin/4tw-power-status", "usr/local/sbin/4tw-backlight",
+             "usr/local/sbin/4tw-keyboard-backlight", "usr/local/sbin/4tw-poweroff",
              "usr/local/sbin/4tw-configure", "usr/local/sbin/4tw-power-setup", "usr/local/lib/4tw/appliance.py",
              "usr/local/lib/4tw/rtc_clock.py", "usr/local/lib/4tw/timezone_provider.py", "usr/local/libexec/4tw-timezone-auto",
              "usr/local/libexec/4tw-online", "usr/local/libexec/4tw-switch-offline", "usr/local/libexec/4tw-typewriter",
@@ -137,8 +143,10 @@ for rtc_unit in ("hwclock.service", "hwclock-save.service", "systemd-hwclock-sav
     rtc_unit_path = root / "etc/systemd/system" / rtc_unit
     check(rtc_unit_path.is_symlink() and rtc_unit_path.readlink() == Path("/dev/null"),
           rtc_unit + " is masked")
-check((project / "config/4tw.cfg").read_text().splitlines()[-1] == "timezone=auto",
-      "writable CONFIG defaults to automatic timezone mode")
+config_defaults = (project / "config/4tw.cfg").read_text().splitlines()
+check("timezone=auto" in config_defaults, "writable CONFIG defaults to automatic timezone mode")
+check("keyboard_backlight=off" in config_defaults,
+      "writable CONFIG defaults to keyboard illumination off when a standard LED is detected")
 provider_config = json.loads(read("/etc/4tw/timezone-provider.json"))
 check(provider_config == {"name": "ipapi.co", "endpoint": "https://ipapi.co/timezone/",
                           "response": "iana-text", "timeout_seconds": 4},
@@ -194,6 +202,18 @@ for helper in ("/usr/local/bin/4tw-select-gpu", "/usr/local/bin/4tw-power-status
                "/usr/local/libexec/4tw-online", "/usr/local/sbin/4tw-retry-wifi",
                "/usr/local/sbin/4tw-enter-offline"):
     check("len(sys.argv) != 1" in read(helper), helper + " rejects all arguments")
+keyboard_helper = read("/usr/local/sbin/4tw-keyboard-backlight")
+keyboard_ui = read("/usr/local/bin/4tw-keyboard-brightness")
+keyboard_helper_tree = ast.parse(keyboard_helper)
+keyboard_calls = [node for node in ast.walk(keyboard_helper_tree) if isinstance(node, ast.Call) and
+                  isinstance(node.func, ast.Name) and node.func.id == "set_keyboard_backlight"]
+check('{"up", "down", "off", "status"}' in keyboard_helper and "shell=True" not in keyboard_helper + keyboard_ui and
+      len(keyboard_calls) == 1 and len(keyboard_calls[0].args) == 1 and not keyboard_calls[0].keywords and
+      "pathlib" not in keyboard_helper.lower() and "Path(" not in keyboard_helper,
+      "keyboard helper accepts only fixed actions and no user-selected path or shell command")
+package_source = (project / "config/packages.txt").read_text().lower()
+check(not any(name in package_source for name in ("linuwu", "acersense", "nitrosense", "acer-gaming")),
+      "no third-party Acer control package is requested")
 passwd = {line.split(":")[0]: line.split(":") for line in read("/etc/passwd").splitlines()}
 check(passwd["kiosk"][-1] == "/usr/local/libexec/4tw-session", "kiosk login program is not a normal shell")
 installed = set(subprocess.check_output(["chroot", str(root), "dpkg-query", "-W", "-f=${Package}\n"], text=True).splitlines())
