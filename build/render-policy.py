@@ -1,22 +1,18 @@
 #!/usr/bin/python3
-import json
 from pathlib import Path
+import shutil
 import sys
 
 project, root = map(Path, sys.argv[1:])
 sys.path.insert(0, str(project / "rootfs-overlay/usr/local/lib/4tw"))
-from appliance import DEFAULT_URL, permitted_url
-patterns = json.loads((project / "config/allowed-sites.json").read_text())
-assert patterns and len(patterns) <= 1000
-for pattern in patterns:
-    # Validate every pattern, including entries after the first match.
-    permitted_url("https://invalid.example/", [pattern])
-assert permitted_url(DEFAULT_URL, patterns)
-policy = json.loads((project / "policies/policies.json").read_text())
-policy["policies"]["WebsiteFilter"]["Exceptions"] = patterns
-destination = root / "etc/firefox/policies/policies.json"
-destination.parent.mkdir(parents=True, exist_ok=True)
-destination.write_text(json.dumps(policy, indent=2) + "\n")
+from appliance import parse_config, write_firefox_policy
+
+template = root / "etc/4tw/firefox-policies.base.json"
+template.parent.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(project / "policies/policies.json", template)
+config = parse_config((project / "config/4tw.cfg").read_text(encoding="utf-8-sig"))
+write_firefox_policy(config.start_url, config.site_lock, config.allowed_extra_domains,
+                     template, root / "etc/firefox/policies/policies.json")
 # Mozilla Linux supports /etc/firefox/policies; distribution is a single link
 # to the same policy file, not a second independently maintained policy set.
 link = root / "usr/lib/firefox/distribution/policies.json"

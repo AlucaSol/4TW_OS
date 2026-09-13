@@ -18,9 +18,18 @@ def check(condition, message):
 check('VERSION_ID="26.04"' in read("/usr/lib/os-release"), "Ubuntu 26.04 base")
 check("MODEL=Release" in read("/etc/4tw-release"), "4TW-OS Release model")
 policy = json.loads(read("/etc/firefox/policies/policies.json"))["policies"]
-allow = json.loads(read("/etc/4tw/allowed-sites.json"))
-check(policy["WebsiteFilter"] == {"Block": ["<all_urls>"], "Exceptions": allow}, "native WebsiteFilter blocks all other sites")
-check(allow == json.loads((project / "config/allowed-sites.json").read_text()), "installed allowlist matches explicit source")
+base_policy = json.loads(read("/etc/4tw/firefox-policies.base.json"))
+check("WebsiteFilter" not in base_policy["policies"], "source-controlled Firefox base has no hard-coded site filter")
+check(base_policy == json.loads((project / "policies/policies.json").read_text()),
+      "installed Firefox base is identical to its source-controlled template")
+check(policy["WebsiteFilter"] == {
+    "Block": ["<all_urls>"],
+    "Exceptions": ["https://4thewords.com/*", "https://*.4thewords.com/*"],
+}, "configured default WebsiteFilter derives from the writable start_url")
+check(not (root / "etc/4tw/allowed-sites.json").exists(), "obsolete built-in site allowlist is absent")
+check((root / "usr/lib/firefox/distribution/policies.json").is_symlink() and
+      (root / "usr/lib/firefox/distribution/policies.json").readlink() == Path("/etc/firefox/policies/policies.json"),
+      "Firefox distribution path uses the one boot-rendered policy file")
 for key in ("DisableDeveloperTools", "BlockAboutConfig", "BlockAboutProfiles", "BlockAboutAddons", "DisablePrivateBrowsing"):
     check(policy.get(key) is True, key)
 check(policy["DisableSecurityBypass"] == {"InvalidCertificate": True, "SafeBrowsing": True}, "TLS/certificate bypass prohibited")
@@ -54,8 +63,10 @@ check("XF86MonBrightness" not in sway and "XF86KbdBrightness" in sway and
       "F11 exec" not in sway and "F12 exec" not in sway,
       "keyboard illumination keys are distinct from LCD and ordinary F11/F12 bindings")
 check(online_active[0] == "include /etc/4tw/sway.conf" and
-      {line for line in online_active if line.startswith("exec ")} == {"exec /usr/local/libexec/4tw-online"},
-      "Online mode includes only the shared controls and fixed Online launcher")
+      {line for line in online_active if line.startswith("exec ")} == {"exec /usr/local/libexec/4tw-online"} and
+      {line for line in online_active if " exec " in line} == {
+          "bindsym --inhibited --no-repeat Ctrl+Mod1+r exec /usr/local/libexec/4tw-return-home"},
+      "Online mode adds only the fixed Return Home control and Online launcher")
 check(offline_active == ["include /etc/4tw/sway.conf", "exec /usr/local/libexec/4tw-typewriter"],
       "Offline mode includes only shared controls and the fixed typewriter launcher")
 check('for_window [app_id="focuswriter" title="^FocusWriter$"] fullscreen enable' in active,
@@ -64,10 +75,26 @@ check("Ctrl+n nop" in online_sway and "Ctrl+o nop" in online_sway and "Ctrl+s no
       "Ctrl+n nop" not in offline_sway and "Ctrl+o nop" not in offline_sway and "Ctrl+s nop" not in offline_sway,
       "document New/Open/Save shortcuts remain available only in Offline mode")
 browser = read("/usr/local/libexec/4tw-browser")
-tree = ast.parse(browser)
+browser_session = read("/usr/local/lib/4tw/browser_session.py")
+tree = ast.parse(browser_session)
 launches = [node for node in ast.walk(tree) if isinstance(node, ast.List) and node.elts and isinstance(node.elts[0], ast.Constant) and node.elts[0].value == "/usr/bin/firefox"]
 check(len(launches) == 1 and len(launches[0].elts) == 6, "exactly one Firefox invocation with one positional start URL")
-check('"--kiosk"' in browser and '"--profile"' in browser and 'LOCK_NB' in browser, "kiosk mode, persistent profile, single-instance launcher lock")
+check('"--kiosk"' in browser_session and '"--profile"' in browser_session and 'LOCK_NB' in browser,
+      "canonical Firefox command retains kiosk mode, persistent profile and single-instance lock")
+return_home = read("/usr/local/libexec/4tw-return-home")
+check("len(sys.argv) != 1" in return_home and "request_return_home()" in return_home and
+      "SIGUSR1" in browser_session and "SUPERVISOR_SCRIPT" in browser_session,
+      "Return Home accepts no input and signals only the fixed Online browser supervisor")
+check("shell=True" not in browser_session + browser + return_home and
+      "pkill" not in browser_session + browser + return_home and
+      "killall" not in browser_session + browser + return_home,
+      "browser reset has no shell execution or name-based arbitrary process killer")
+check("start_new_session=True" in browser_session and "group_killer(process.pid, signal.SIGKILL)" in browser_session,
+      "forced fallback is limited to the supervised Firefox process group")
+check(all(name in browser_session for name in ("sessionstore.jsonlz4", "sessionCheckpoints.json",
+                                                "recovery.jsonlz4", "previous.jsonlz4", "upgrade.jsonlz4-")) and
+      "cookies.sqlite" not in browser_session and "shutil.rmtree" not in browser_session,
+      "Return Home clears only Firefox session-restore metadata, never the profile or cookies")
 online = read("/usr/local/libexec/4tw-online")
 for label, command in (("Retry Wi-Fi", "/usr/local/sbin/4tw-retry-wifi"),
                        ("Offline Typewriter", "/usr/local/libexec/4tw-switch-offline"),
@@ -94,7 +121,7 @@ check("sway-online.conf" in session and "sway-offline.conf" in session and
       "session selects one mode and permits only the fixed same-boot Online-to-Offline transition")
 for variable in ("DRI_PRIME", "__NV_PRIME_RENDER_OFFLOAD", "__GLX_VENDOR_LIBRARY_NAME", "VK_LAYER_NV_optimus"):
     check(variable in session, "discrete-GPU offload variable is cleared: " + variable)
-acceleration_config = json.dumps(policy) + session + browser
+acceleration_config = json.dumps(policy) + session + browser + browser_session
 for forbidden in ("layers.acceleration.disabled", "gfx.webrender.software", "LIBGL_ALWAYS_SOFTWARE", "WLR_RENDERER=pixman"):
     check(forbidden not in acceleration_config, "Firefox/Sway hardware acceleration is not disabled by " + forbidden)
 check('"Homepage"' not in json.dumps(policy), "no redundant homepage launch policy")
@@ -107,10 +134,11 @@ for path in ("usr/local/bin/4tw-battery", "usr/local/bin/4tw-brightness", "usr/l
              "usr/local/bin/4tw-select-gpu", "usr/local/bin/4tw-power-status", "usr/local/sbin/4tw-backlight",
              "usr/local/sbin/4tw-keyboard-backlight", "usr/local/sbin/4tw-poweroff",
              "usr/local/sbin/4tw-configure", "usr/local/sbin/4tw-power-setup", "usr/local/lib/4tw/appliance.py",
-             "usr/local/lib/4tw/rtc_clock.py", "usr/local/lib/4tw/timezone_provider.py", "usr/local/libexec/4tw-timezone-auto",
+             "usr/local/lib/4tw/browser_session.py", "usr/local/lib/4tw/rtc_clock.py", "usr/local/lib/4tw/timezone_provider.py",
+             "usr/local/libexec/4tw-browser", "usr/local/libexec/4tw-return-home", "usr/local/libexec/4tw-timezone-auto",
              "usr/local/libexec/4tw-online", "usr/local/libexec/4tw-switch-offline", "usr/local/libexec/4tw-typewriter",
              "usr/local/sbin/4tw-retry-wifi", "usr/local/sbin/4tw-enter-offline",
-             "etc/4tw/timezone-provider.json", "etc/NetworkManager/dispatcher.d/50-4tw-timezone",
+             "etc/4tw/firefox-policies.base.json", "etc/4tw/timezone-provider.json", "etc/NetworkManager/dispatcher.d/50-4tw-timezone",
              "etc/sudoers.d/4tw-kiosk"):
     stat = (root / path).stat()
     check(stat.st_uid == 0 and not stat.st_mode & 0o022, path + " is root-owned and not user-writable")
@@ -144,6 +172,9 @@ for rtc_unit in ("hwclock.service", "hwclock-save.service", "systemd-hwclock-sav
     check(rtc_unit_path.is_symlink() and rtc_unit_path.readlink() == Path("/dev/null"),
           rtc_unit + " is masked")
 config_defaults = (project / "config/4tw.cfg").read_text().splitlines()
+check("start_url=https://4thewords.com/" in config_defaults and "site_lock=auto" in config_defaults and
+      "allowed_extra_domains=" in config_defaults,
+      "writable CONFIG supplies the dynamic site-policy defaults")
 check("timezone=auto" in config_defaults, "writable CONFIG defaults to automatic timezone mode")
 check("keyboard_backlight=off" in config_defaults,
       "writable CONFIG defaults to keyboard illumination off when a standard LED is detected")
@@ -199,6 +230,7 @@ check("bInterfaceClass" in power_source and '{"03", "08"}' in power_source and '
       "USB autosuspend excludes storage, input and networking")
 for helper in ("/usr/local/bin/4tw-select-gpu", "/usr/local/bin/4tw-power-status", "/usr/local/sbin/4tw-power-setup",
                "/usr/local/libexec/4tw-timezone-auto", "/usr/local/libexec/4tw-typewriter",
+               "/usr/local/libexec/4tw-browser", "/usr/local/libexec/4tw-return-home",
                "/usr/local/libexec/4tw-online", "/usr/local/sbin/4tw-retry-wifi",
                "/usr/local/sbin/4tw-enter-offline"):
     check("len(sys.argv) != 1" in read(helper), helper + " rejects all arguments")

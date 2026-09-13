@@ -11,7 +11,6 @@ sys.path.insert(0, str(PROJECT / "rootfs-overlay/usr/local/lib/4tw"))
 spec = importlib.util.spec_from_file_location("appliance", PROJECT / "rootfs-overlay/usr/local/lib/4tw/appliance.py")
 appliance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(appliance)
-ALLOW = ["https://4thewords.com/*", "https://*.4thewords.com/*"]
 
 
 class Helpers(unittest.TestCase):
@@ -210,35 +209,40 @@ class Helpers(unittest.TestCase):
             self.assertIn("current level: 3", report)
             self.assertIn("maximum level: 3", report)
 
-    def test_allowed_and_denied_urls(self):
-        for url in ("https://4thewords.com/", "https://www.4thewords.com/write", "https://api.4thewords.com/path?q=x"):
-            self.assertTrue(appliance.permitted_url(url, ALLOW))
-        for url in ("https://example.com/", "http://4thewords.com/", "https://4thewords.com.evil.example/",
-                    "https://evil4thewords.com/", "https://4thewords.com@evil.example/", "https://u@4thewords.com/",
-                    "https://4thewords.com:8443/", "file:///etc/passwd", "javascript:alert(1)",
-                    "https://4thewords.com/\nanything", "https://4thewords.com:bad/", "https://[bad/"):
-            self.assertFalse(appliance.permitted_url(url, ALLOW), url)
+    def test_start_url_and_hostname_validation(self):
+        self.assertEqual(appliance.valid_start_url("HTTPS://Writing.Example.com/path?q=x"),
+                         "https://writing.example.com/path?q=x")
+        self.assertEqual(appliance.valid_start_url("http://example.com/"), "http://example.com/")
+        for url in ("file:///etc/passwd", "javascript:alert(1)", "https://u@example.com/",
+                    "https://example.com/\nanything", "https://example.com:bad/", "https://[bad/",
+                    "https://example.com/;touch", "https://*.example.com/"):
+            self.assertIsNone(appliance.valid_start_url(url), url)
+        for hostname in ("*.example.com", "https://example.com", "example.com/path", "bad_name.example"):
+            self.assertIsNone(appliance.valid_hostname(hostname), hostname)
 
     def test_default_config_is_credential_free(self):
-        self.assertEqual(appliance.parse_config((PROJECT / "config/4tw.cfg").read_text(), ALLOW),
-                         ("https://4thewords.com/", b"", "", "auto", "off"))
+        config = appliance.parse_config((PROJECT / "config/4tw.cfg").read_text())
+        self.assertEqual((config.start_url, config.ssid, config.psk, config.timezone,
+                          config.keyboard_backlight, config.site_lock, config.allowed_extra_domains),
+                         ("https://4thewords.com/", b"", "", "auto", "off", "auto", ()))
+        self.assertEqual(config.diagnostics, ())
 
     def test_config_key_validation(self):
-        for value in ("command=sh", "wifi_ssid_b64=\nwifi_ssid_b64=", "start_url=https://example.com/",
+        for value in ("command=sh", "wifi_ssid_b64=\nwifi_ssid_b64=",
                       "wifi_ssid_b64=%%", "keyboard_backlight=/bin/sh", "no equals"):
             with self.assertRaises(ValueError):
-                appliance.parse_config(value, ALLOW)
+                appliance.parse_config(value)
 
     def test_config_shell_text_is_just_data(self):
         ssid = b"$(touch /tmp/unsafe);wifi"
         psk = "pass;$(id)\\ word"
         config = "wifi_ssid_b64=" + base64.b64encode(ssid).decode() + "\nwifi_psk_b64=" + base64.b64encode(psk.encode()).decode()
-        url, decoded_ssid, decoded_psk, timezone, keyboard_backlight = appliance.parse_config(config, ALLOW)
-        self.assertEqual(decoded_ssid, ssid)
-        self.assertEqual(decoded_psk, psk)
-        self.assertEqual(timezone, "auto")
-        self.assertEqual(keyboard_backlight, "off")
-        keyfile = appliance.nm_keyfile(decoded_ssid, decoded_psk)
+        parsed = appliance.parse_config(config)
+        self.assertEqual(parsed.ssid, ssid)
+        self.assertEqual(parsed.psk, psk)
+        self.assertEqual(parsed.timezone, "auto")
+        self.assertEqual(parsed.keyboard_backlight, "off")
+        keyfile = appliance.nm_keyfile(parsed.ssid, parsed.psk)
         self.assertIn("psk=pass;$(id)\\\\\\sword", keyfile)
         self.assertNotIn("ssid=$(", keyfile)
 
@@ -248,16 +252,16 @@ class Helpers(unittest.TestCase):
             zone = zoneinfo / "Australia/Darwin"
             zone.parent.mkdir()
             zone.write_bytes(b"TZif")
-            parsed = appliance.parse_config("timezone=Australia/Darwin", ALLOW, zoneinfo)
-            self.assertEqual(parsed[-2], "Australia/Darwin")
+            parsed = appliance.parse_config("timezone=Australia/Darwin", zoneinfo)
+            self.assertEqual(parsed.timezone, "Australia/Darwin")
             for value in ("../../etc/passwd", "/etc/passwd", "Australia/../Darwin",
                           "$(touch /tmp/unsafe)", "Australia/Darwin;sh", "Not/AZone"):
-                parsed = appliance.parse_config("timezone=" + value, ALLOW, zoneinfo)
-                self.assertEqual(parsed[-2], "auto", value)
+                parsed = appliance.parse_config("timezone=" + value, zoneinfo)
+                self.assertEqual(parsed.timezone, "auto", value)
 
     def test_keyboard_backlight_config_is_fixed_data(self):
-        self.assertEqual(appliance.parse_config("keyboard_backlight=keep", ALLOW)[-1], "keep")
-        self.assertEqual(appliance.parse_config("keyboard_backlight=off", ALLOW)[-1], "off")
+        self.assertEqual(appliance.parse_config("keyboard_backlight=keep").keyboard_backlight, "keep")
+        self.assertEqual(appliance.parse_config("keyboard_backlight=off").keyboard_backlight, "off")
 
 
 if __name__ == "__main__":

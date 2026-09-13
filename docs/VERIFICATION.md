@@ -1,5 +1,48 @@
 # Release verification
 
+## Pending dynamic-site/Return-Home change - configured rootfs only
+
+On 13 September the source-controlled Firefox policy was separated into an
+installed hostname-free base template and a boot-rendered current policy. The
+Windows-readable defaults now include `site_lock=auto` and
+`allowed_extra_domains=`. Online Sway alone binds Ctrl+Alt+R to the fixed
+Return Home helper; Offline FocusWriter is not targeted.
+
+Source tests passed:
+
+- 21 existing helper tests, including the revised HTTP(S) URL/hostname parser;
+- 7 dynamic-policy tests covering 4thewords, a changed hostname/path, exact
+  subdomain scope, extra domains, `site_lock=off`, malformed fallback,
+  injection-like data, preservation of base policy, and no unchanged rewrite;
+- 5 browser-session tests covering graceful and bounded forced termination,
+  exact Online supervisor targeting, minimal session-state deletion, canonical
+  one-URL arguments, and coalesced repeated reset requests.
+
+The canonical `configure` stage was then run against the existing Ubuntu 26.04
+native build and package cache. It passed Python compilation, all helper suites,
+14 portability checks, 4 compression checks, 4 cleanup-safety checks, rootfs
+inspection, RTC no-write inspection, all three Sway syntax checks, exact sudo
+allow/deny checks, the headless FocusWriter test, and the real Firefox smoke
+test. Firefox loaded 4thewords in one tab with the generated policy active;
+both a clicked `example.com` link and direct `example.org` navigation reached
+Firefox's `blockedByPolicy` document without adding a tab.
+
+The assembled runtime is at
+`/home/<build-user>/4tw-ubuntu-sway-build/.work/rootfs`. Its recorded configured-source
+digest and a fresh digest both equal
+`53d0ee84feb143b546b56d77973475638e4a4fa6cbc4928c677a0026dcf568d3`.
+The policy template/current policy are root-owned mode 0644; browser supervisor
+and Return Home helper are root-owned mode 0755. No `build-img.sh`, image
+verification, compression, export or USB-write stage was run. The old raw IMG
+still has its 9 September timestamp, so the verified image and hashes below do
+not contain this pending source change.
+
+Deferred Acer checks: boot Online, confirm one configured start page, visit a
+blocked/internal destination, press Ctrl+Alt+R, confirm exactly one configured
+page and retained login, then change `start_url` on `4TW-CONFIG`, reboot, and
+confirm both launch and allowlist change without rebuilding. Restore the normal
+4thewords settings afterward. These physical checks have not been claimed.
+
 The current deliverable is `artifacts/4TW-OS_RELEASE.img`
 (17,179,869,184 bytes). It was built once by the canonical four-stage Release
 workflow and inspected from the actual final IMG. It includes the
@@ -132,7 +175,7 @@ drive. `artifacts/verify-img.log` records these checks:
 | Boot editing/console | GRUB command/edit access remains password-locked; the two appliance entries are unrestricted for normal selection |
 | Logo | Installed PNG byte-matches the original BCLD asset and is present inside initramfs |
 | Firefox launch | Online only: one fixed invocation, `--kiosk`, one positional URL, persistent profile, launcher lock |
-| Website policy | Native WebsiteFilter blocks all URLs except the explicit HTTPS 4thewords allowlist |
+| Website policy in the existing IMG | Native WebsiteFilter blocks all URLs except its then-static HTTPS 4thewords allowlist; the pending source makes this boot-configurable |
 | Sway modes | One shared control-only config plus one fixed Online launcher or one fixed Offline launcher; no generic desktop includes |
 | Kiosk controls | The same four fixed global battery, brightness and shutdown commands are present in both modes |
 | Privilege scope | Exact poweroff, brightness up/down, Wi-Fi retry and Offline-transition commands; arguments and general sudo commands are rejected |

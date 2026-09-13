@@ -1,6 +1,5 @@
 {
   "policies": {
-    "WebsiteFilter": {"Block": ["<all_urls>"], "Exceptions": []},
     "BlockAboutAddons": true,
     "BlockAboutConfig": true,
     "BlockAboutProfiles": true,

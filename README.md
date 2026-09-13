@@ -133,7 +133,7 @@ unset or missing optional cache is the normal fresh-clone case and is silent.
 
 2. With Rufus 4.7 or newer, select **only the intended 32 GB SanDisk** and select the `.img.zst` directly. Do not extract it first. Flashing erases that USB. Do not select the internal SSD.
 3. Reinsert the USB into Windows. Open `4TW-CONFIG` and edit `4tw.cfg` in Notepad. If Windows offers to format an unfamiliar Linux or EFI partition, **cancel**. `4TW-WRITING` is the normal Windows-readable document volume.
-4. Supply the Base64 SSID/password on the USB only. Leave `start_url=https://4thewords.com/` unchanged unless another approved path is required. Keep `timezone=auto`, or enter a valid IANA name such as `timezone=Australia/Darwin` for a manual override. `keyboard_backlight=off` requests an initial off state when Linux exposes a standard keyboard LED; use `keep` to retain the firmware state. Do not add quotation marks around these values.
+4. Supply the Base64 SSID/password on the USB only. `start_url=` selects the Online kiosk site; `site_lock=auto` derives its domain filter from that URL, and `allowed_extra_domains=` can add comma-separated supporting hostnames. Keep `timezone=auto`, or enter a valid IANA name such as `timezone=Australia/Darwin` for a manual override. `keyboard_backlight=off` requests an initial off state when Linux exposes a standard keyboard LED; use `keep` to retain the firmware state. Do not add quotation marks around these values.
 5. Optionally edit `4tw-boot.cfg`: use `set default_mode="online"` or `set default_mode="offline"`. The five-second menu always keeps both choices; invalid/missing settings default Online. This change never requires a rebuild or reflash.
 6. Safely eject, then use the Acer's F12 menu to boot the USB with Secure Boot still enabled.
 
@@ -149,7 +149,7 @@ $wifiPlain = [Net.NetworkCredential]::new('', $wifiSecret).Password
 Remove-Variable wifiPlain, wifiSecret, wifiName
 ```
 
-Copy each result into the corresponding `wifi_ssid_b64=` or `wifi_psk_b64=` line. **Base64 is not encryption:** the displayed text and USB file reveal the credentials to anyone who decodes them. Close that PowerShell window afterwards. The parser accepts only the five documented keys, never evaluates shell text, and rejects invalid/duplicate keys. Both credentials must be filled or both empty; this version supports personal WPA/WPA2/WPA3-transition PSK networks, not enterprise EAP or captive portals. Runtime NetworkManager credentials are written under `/run`, not persisted to the OS filesystem.
+Copy each result into the corresponding `wifi_ssid_b64=` or `wifi_psk_b64=` line. **Base64 is not encryption:** the displayed text and USB file reveal the credentials to anyone who decodes them. Close that PowerShell window afterwards. The parser accepts only the eight documented keys, never evaluates shell text, and rejects invalid/duplicate keys. Both credentials must be filled or both empty; this version supports personal WPA/WPA2/WPA3-transition PSK networks, not enterprise EAP or captive portals. Runtime NetworkManager credentials are written under `/run`, not persisted to the OS filesystem.
 
 Wi-Fi is attempted directly, with a bounded startup timeout. Ethernet is unmanaged and wait-online services are disabled. On failure, a fixed overlay offers Retry Wi-Fi, Offline Typewriter, or Shut Down. It never switches modes without the user's choice.
 
@@ -172,17 +172,20 @@ In `timezone=auto`, 4TW-OS uses the last successful IANA timezone (or `Etc/UTC` 
 | Ctrl+Alt+B | Battery notification, automatically disappears after 5 seconds |
 | Ctrl+Alt+Left | Brightness down approximately 10 percentage points |
 | Ctrl+Alt+Right | Brightness up approximately 10 percentage points |
+| Ctrl+Alt+R | Online only: fully reset Firefox and return to the configured start URL |
 | Fn+F11 / keyboard illumination down | Keyboard illumination down to Off when exposed as `XF86KbdBrightnessDown` |
 | Fn+F12 / keyboard illumination up | Keyboard illumination up when exposed as `XF86KbdBrightnessUp` |
 | Ctrl+Alt+Delete | Sync and clean system power-off |
 
 LCD brightness defaults to approximately 50%, with a 10–100% range. Keyboard illumination uses the LED device's native levels when the kernel exposes one and defaults to Off; `keyboard_backlight=keep` on `4TW-CONFIG` leaves its firmware state alone. Changes show a temporary Mako notification. Missing battery/rate/backlight data produces an unavailable message or omitted field, not fabricated values. Runtime estimates are approximate and shown only while discharging with usable measurements. The battery overlay also reports the NVIDIA display device as `suspended`, `active` or `unavailable` when that state can be determined reliably. The normal physical power button requests clean power-off. Lid closing is configured to do nothing; use shutdown before packing the laptop away. See `docs/KEYBOARD-BACKLIGHT.md` for the conditional hardware support and test procedure.
 
-Editing shortcuts such as copy/paste, undo, select-all and bold remain available. Browser-management shortcuts are intercepted in Online mode; FocusWriter's writing commands remain available Offline. No terminal appears. PipeWire/WirePlumber supplies normal browser audio without a mixer application.
+Editing shortcuts such as copy/paste, undo, select-all and bold remain available. F5 remains an ordinary reload of the current page; Ctrl+Alt+R instead closes the supervised browser, clears only tab/window recovery metadata, and relaunches the one canonical kiosk command at `start_url`. Browser-management shortcuts are intercepted in Online mode; FocusWriter's writing commands remain available Offline. No terminal appears. PipeWire/WirePlumber supplies normal browser audio without a mixer application.
 
 ## Website policy and security
 
-`config/allowed-sites.json` is the single supporting-domain allowlist. Initially only HTTPS on `4thewords.com` and its subdomains is allowed. `policies/policies.json` supplies native Firefox restrictions; the builder inserts the allowlist. Extend that JSON and rebuild if physical testing identifies a necessary supporting domain. An added domain also permits ordinary navigation there; add only trusted, necessary domains. There is no IP-based website firewall and no TLS certificate bypass.
+`policies/policies.json` is the source-controlled Firefox base policy and contains no website hostname. At each boot the root configurator safely parses `4tw.cfg`, writes the validated start URL to `/run/4tw/start-url`, and atomically renders `/etc/firefox/policies/policies.json` before Firefox starts. With `site_lock=auto`, WebsiteFilter blocks all URLs except the configured hostname, its subdomains and the exact validated `allowed_extra_domains` hostnames; patterns use the configured start URL's HTTP or HTTPS scheme. It never broadens `writing.example.com` to `example.com`, or an extra hostname to that extra's subdomains. With `site_lock=off`, WebsiteFilter is omitted while every other enterprise and Sway kiosk restriction remains.
+
+Changing these site settings on the Windows-readable `4TW-CONFIG` volume takes effect at next boot without an IMG rebuild or reflash. Invalid start URLs fall back to `https://4thewords.com/`; invalid optional domains are individually ignored. An extra domain also permits ordinary top-level navigation there, so add only trusted, necessary hosts. There is no IP-based website firewall and no TLS certificate bypass.
 
 Firefox's native WebsiteFilter governs website navigation; this is not a promise that every background browser/network request is restricted to those hosts. Kiosk mode and Sway prevent ordinary browser management. This is a personal appliance, not protection against someone physically rewriting its unencrypted USB partitions.
 
@@ -192,7 +195,7 @@ The integrated GPU is preferred when Linux reports it driving the internal panel
 
 ## Persistence and updates
 
-The normal ext4 system, Firefox profile and FocusWriter emergency recovery state persist. Offline documents persist separately on `4TW-WRITING`. Startup tabs are not restored; Online opens only the configured URL. `/tmp`, `/var/tmp`, logs and browser cache use RAM; root uses `noatime`, and Firefox recovery-state writes are limited to five-minute intervals. There is no USB swap. Always shut down cleanly before removing power or the USB so the writable FAT32 filesystem is unmounted safely.
+The normal ext4 system, Firefox profile and FocusWriter emergency recovery state persist. Offline documents persist separately on `4TW-WRITING`. Startup tabs are not restored; Online opens only the configured URL. Return Home removes `sessionstore.jsonlz4`, `sessionCheckpoints.json` and Firefox's recovery/previous/upgrade files under `sessionstore-backups`; it does not delete `cookies.sqlite`, site storage, preferences or the profile. `/tmp`, `/var/tmp`, logs and browser cache use RAM; root uses `noatime`, and Firefox recovery-state writes are limited to five-minute intervals. There is no USB swap. Always shut down cleanly before removing power or the USB so the writable FAT32 filesystem is unmounted safely.
 
 For Ubuntu/Firefox updates, back up anything important and rebuild using the same five native stages above. The packages stage refreshes signed indexes and installs current packages; configure regenerates initramfs and validates the kiosk; image copies the current signed boot chain; verification gates Zstandard compression and Windows export. Reflash the new release, restore `4tw.cfg`, and log in again. Reflashing resets the old profile, so ensure writing has synced to 4thewords first. Automatic APT timers are intentionally disabled to avoid unattended writes during a writing session. There is no kiosk-admin shell or SSH path.
 

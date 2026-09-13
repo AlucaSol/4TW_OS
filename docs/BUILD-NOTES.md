@@ -1,4 +1,34 @@
-# Build notes - 11 September 2026
+# Build notes - 13 September 2026
+
+## Dynamic site policy and Return Home (no IMG build)
+
+The static Firefox base policy no longer contains WebsiteFilter or a website
+hostname. The root-owned boot configurator now validates `start_url`,
+`site_lock=auto|off`, and comma-separated `allowed_extra_domains`, then derives
+the exact host/subdomain Firefox patterns and atomically refreshes
+`/etc/firefox/policies/policies.json` before kiosk login. An unchanged policy
+is not rewritten. Invalid start URLs use the known-safe 4thewords default,
+invalid lock values use `auto`, and invalid optional domains are individually
+ignored with value-free diagnostics. HTTPS checking and every unrelated
+enterprise policy remain unchanged.
+
+The existing `/usr/local/libexec/4tw-browser` launch path is now a bounded
+single-process supervisor. Online Sway binds Ctrl+Alt+R only to
+`/usr/local/libexec/4tw-return-home`; that no-argument helper validates the
+Online-mode PID and exact supervisor command before sending SIGUSR1. The
+supervisor stops only its own Firefox child, waits three seconds, uses a
+two-second forced fallback limited to that child's dedicated process group,
+removes only Firefox session/tab
+restore metadata, and relaunches its one canonical six-argument kiosk command.
+Cookies, site storage, profile preferences and the profile directory are not
+removed. Repeated requests coalesce, and an unkillable child causes the normal
+safe poweroff path rather than accumulating browsers.
+
+Targeted source tests and the cached rootfs configure/inspection results are
+recorded in `docs/VERIFICATION.md`. Per the task constraint, no IMG, compressed
+release, checksum or Rufus output was created or changed. Physical Firefox,
+login-preservation and changed-USB-configuration tests remain deferred until
+the next combined Release build.
 
 ## Safe cleanup utility (no cleanup performed)
 

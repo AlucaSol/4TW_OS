@@ -1,0 +1,9 @@
+#!/usr/bin/python3 -I
+"""Request one fixed-purpose Firefox kiosk reset."""
+import sys
+sys.path.insert(0, "/usr/local/lib/4tw")
+from browser_session import request_return_home
+
+if len(sys.argv) != 1:
+    raise SystemExit(2)
+request_return_home()

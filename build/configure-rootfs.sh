@@ -21,7 +21,7 @@ find "$ROOTFS/usr/local/bin" "$ROOTFS/usr/local/sbin" "$ROOTFS/usr/local/libexec
 chmod 755 "$ROOTFS/etc/NetworkManager/dispatcher.d/50-4tw-timezone"
 chmod 440 "$ROOTFS/etc/sudoers.d/4tw-kiosk"
 install -m 644 "$PROJECT/assets/4TW-OS.png" "$ROOTFS/usr/share/plymouth/themes/4tw/4TW-OS.png"
-install -m 644 "$PROJECT/config/allowed-sites.json" "$ROOTFS/etc/4tw/allowed-sites.json"
+rm -f "$ROOTFS/etc/4tw/allowed-sites.json"
 python3 "$PROJECT/build/render-policy.py" "$PROJECT" "$ROOTFS"
 if ! inroot id kiosk >/dev/null 2>&1; then
     inroot useradd --uid 1000 --user-group --create-home --shell /usr/local/libexec/4tw-session kiosk
@@ -61,10 +61,13 @@ for kernel in "$ROOTFS"/boot/vmlinuz-*-generic; do
 done
 inroot visudo -cf /etc/sudoers
 inroot python3 -m py_compile /usr/local/lib/4tw/appliance.py /usr/local/lib/4tw/rtc_clock.py \
-    /usr/local/lib/4tw/timezone_provider.py \
+    /usr/local/lib/4tw/timezone_provider.py /usr/local/lib/4tw/browser_session.py \
     /usr/local/bin/4tw-keyboard-brightness /usr/local/sbin/4tw-keyboard-backlight \
-    /usr/local/libexec/4tw-online /usr/local/libexec/4tw-typewriter
+    /usr/local/libexec/4tw-browser /usr/local/libexec/4tw-online \
+    /usr/local/libexec/4tw-return-home /usr/local/libexec/4tw-typewriter
 python3 "$PROJECT/tests/test_helpers.py"
+python3 "$PROJECT/tests/test_site_policy.py"
+python3 "$PROJECT/tests/test_browser_session.py"
 python3 "$PROJECT/tests/test_timezone.py"
 python3 "$PROJECT/tests/test_rtc_clock.py"
 python3 "$PROJECT/tests/test_dual_mode.py"

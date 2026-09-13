@@ -1,6 +1,7 @@
 """Fixed-purpose kiosk helpers. No config values are evaluated as code."""
 import base64
 import binascii
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import math
@@ -10,11 +11,14 @@ import re
 import stat
 import subprocess
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from rtc_clock import import_local_rtc
 
 DEFAULT_URL = "https://4thewords.com/"
+FIREFOX_POLICY_TEMPLATE = Path("/etc/4tw/firefox-policies.base.json")
+FIREFOX_POLICY = Path("/etc/firefox/policies/policies.json")
+START_URL = Path("/run/4tw/start-url")
 ZONEINFO = Path("/usr/share/zoneinfo")
 LOCALTIME = Path("/etc/localtime")
 TIMEZONE_FILE = Path("/etc/timezone")
@@ -39,6 +43,18 @@ DEV_DRI = Path("/dev/dri")
 SYS_CPU = Path("/sys/devices/system/cpu")
 SYS_USB = Path("/sys/bus/usb/devices")
 NVIDIA_VENDOR = "0x10de"
+
+
+@dataclass(frozen=True)
+class ApplianceConfig:
+    start_url: str = DEFAULT_URL
+    ssid: bytes = b""
+    psk: str = ""
+    timezone: str = "auto"
+    keyboard_backlight: str = "off"
+    site_lock: str = "auto"
+    allowed_extra_domains: tuple = ()
+    diagnostics: tuple = ()
 
 
 def number(path):
@@ -508,24 +524,115 @@ def keyboard_backlight_diagnostics(led_root=SYS_LEDS, input_root=SYS_INPUT, modu
     return "\n".join(lines)
 
 
-def permitted_url(url, patterns):
-    if not isinstance(url, str) or len(url) > 4096 or any(ord(c) < 33 or ord(c) == 127 for c in url):
-        return False
+def valid_hostname(value):
+    """Return one normalised DNS hostname, never a policy pattern."""
+    if not isinstance(value, str) or not value or len(value) > 253:
+        return None
+    value = value.rstrip(".")
     try:
-        parsed = urlsplit(url)
-        if parsed.scheme != "https" or parsed.username is not None or parsed.password is not None or parsed.port not in (None, 443):
-            return False
-        host = (parsed.hostname or "").lower()
+        value = value.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError):
+        return None
+    labels = value.split(".")
+    if not labels or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                         for label in labels):
+        return None
+    return value
+
+
+def valid_start_url(value):
+    """Return a normalised HTTP(S) URL with a valid hostname, or None."""
+    if (not isinstance(value, str) or not value or len(value) > 4096 or
+            any(ord(char) < 33 or ord(char) == 127 for char in value) or
+            any(char in value for char in "`$\\\"';|<>")):
+        return None
+    try:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"} or parsed.username is not None or parsed.password is not None:
+            return None
+        hostname = valid_hostname(parsed.hostname)
+        port = parsed.port
     except ValueError:
-        return False
-    for pattern in patterns:
-        match = re.fullmatch(r"https://(\*\.)?([a-z0-9]+(?:[.-][a-z0-9]+)*)/\*", pattern)
-        if not match:
-            raise ValueError("Unsupported allowlist pattern")
-        wildcard, domain = match.groups()
-        if host == domain or (wildcard and host.endswith("." + domain)):
-            return True
-    return False
+        return None
+    if not hostname or port == 0:
+        return None
+    netloc = hostname + ((":" + str(port)) if port is not None else "")
+    return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, parsed.fragment))
+
+
+def dynamic_site_patterns(start_url, extra_domains=()):
+    """Build Firefox match patterns from one already validated start URL."""
+    url = valid_start_url(start_url)
+    if not url:
+        raise ValueError("Invalid start URL")
+    parsed = urlsplit(url)
+    patterns = [f"{parsed.scheme}://{parsed.hostname}/*", f"{parsed.scheme}://*.{parsed.hostname}/*"]
+    domains = {parsed.hostname}
+    for value in extra_domains:
+        hostname = valid_hostname(value)
+        if not hostname:
+            raise ValueError("Invalid extra domain")
+        if hostname not in domains:
+            patterns.append(f"{parsed.scheme}://{hostname}/*")
+            domains.add(hostname)
+    return patterns
+
+
+def render_firefox_policy(base_policy, start_url, site_lock="auto", extra_domains=()):
+    """Copy the base policy and alter only its optional WebsiteFilter."""
+    policy = json.loads(json.dumps(base_policy))
+    policies = policy.get("policies")
+    if not isinstance(policies, dict):
+        raise ValueError("Invalid Firefox base policy")
+    policies.pop("WebsiteFilter", None)
+    if site_lock == "auto":
+        policies["WebsiteFilter"] = {
+            "Block": ["<all_urls>"],
+            "Exceptions": dynamic_site_patterns(start_url, extra_domains),
+        }
+    elif site_lock != "off":
+        raise ValueError("Invalid site lock mode")
+    return policy
+
+
+def write_firefox_policy(start_url, site_lock="auto", extra_domains=(),
+                         template_path=FIREFOX_POLICY_TEMPLATE, destination=FIREFOX_POLICY):
+    """Atomically install a policy, avoiding a USB write when it is unchanged."""
+    base = json.loads(template_path.read_text(encoding="utf-8"))
+    content = json.dumps(render_firefox_policy(base, start_url, site_lock, extra_domains), indent=2) + "\n"
+    try:
+        if destination.read_text(encoding="utf-8") == content:
+            return False
+    except OSError:
+        pass
+    destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    temporary = destination.with_name("." + destination.name + ".4tw-new")
+    try:
+        if os.path.lexists(temporary):
+            temporary.unlink()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(temporary, flags, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
+    return True
+
+
+def read_validated_start_url(path=START_URL):
+    try:
+        return valid_start_url(path.read_text(encoding="utf-8").strip()) or DEFAULT_URL
+    except OSError:
+        return DEFAULT_URL
 
 
 def boot_mode(cmdline):
@@ -799,7 +906,7 @@ def automatic_timezone_once(provider, mode_path=TIMEZONE_MODE, attempted_path=TI
     return "updated"
 
 
-def parse_config(text, patterns, zoneinfo_root=ZONEINFO):
+def parse_config(text, zoneinfo_root=ZONEINFO):
     if len(text.encode("utf-8")) > 16384:
         raise ValueError("Configuration too large")
     values = {}
@@ -808,12 +915,29 @@ def parse_config(text, patterns, zoneinfo_root=ZONEINFO):
             continue
         key, separator, value = line.partition("=")
         key, value = key.strip(), value.strip()
-        if not separator or key not in {"wifi_ssid_b64", "wifi_psk_b64", "start_url", "timezone", "keyboard_backlight"} or key in values:
+        if not separator or key not in {"wifi_ssid_b64", "wifi_psk_b64", "start_url", "timezone", "keyboard_backlight",
+                                        "site_lock", "allowed_extra_domains"} or key in values:
             raise ValueError("Unsupported or duplicate configuration key")
         values[key] = value
-    url = values.get("start_url") or DEFAULT_URL
-    if not permitted_url(url, patterns):
-        raise ValueError("Start URL is not allowed")
+    diagnostics = []
+    url = valid_start_url(values.get("start_url", ""))
+    if not url:
+        url = DEFAULT_URL
+        diagnostics.append("start_url is missing or invalid; using the safe default")
+    site_lock = values.get("site_lock", "auto")
+    if site_lock not in {"auto", "off"}:
+        site_lock = "auto"
+        diagnostics.append("site_lock is invalid; using auto")
+    extra_domains = []
+    for index, entry in enumerate(values.get("allowed_extra_domains", "").split(","), 1):
+        entry = entry.strip()
+        if not entry:
+            continue
+        hostname = valid_hostname(entry)
+        if not hostname:
+            diagnostics.append(f"ignored invalid allowed_extra_domains entry {index}")
+        elif hostname not in extra_domains:
+            extra_domains.append(hostname)
     try:
         ssid = base64.b64decode(values.get("wifi_ssid_b64", ""), validate=True)
         secret = base64.b64decode(values.get("wifi_psk_b64", ""), validate=True)
@@ -835,7 +959,8 @@ def parse_config(text, patterns, zoneinfo_root=ZONEINFO):
     keyboard_backlight = values.get("keyboard_backlight", "off")
     if keyboard_backlight not in {"off", "keep"}:
         raise ValueError("Invalid keyboard backlight setting")
-    return url, ssid, psk, timezone, keyboard_backlight
+    return ApplianceConfig(url, ssid, psk, timezone, keyboard_backlight, site_lock,
+                           tuple(extra_domains), tuple(diagnostics))
 
 
 def nm_keyfile(ssid, psk):
@@ -858,22 +983,31 @@ def configure_runtime():
     except OSError:
         mode = "online"
     _write_runtime(APPLIANCE_MODE, mode)
-    url, ssid, psk, timezone, keyboard_backlight = DEFAULT_URL, b"", "", "auto", "off"
+    config = ApplianceConfig()
     try:
-        patterns = json.loads(Path("/etc/4tw/allowed-sites.json").read_text())
         with Path("/config/4tw.cfg").open(encoding="utf-8-sig") as handle:
             text = handle.read(16385)
-        url, ssid, psk, timezone, keyboard_backlight = parse_config(text, patterns)
+        config = parse_config(text)
     except (OSError, ValueError, UnicodeError):
         # Never print the input or a decoder exception containing credentials.
         print("4TW-OS: configuration unavailable or invalid; using safe defaults.", flush=True)
-    _write_runtime(runtime / "start-url", url)
-    _write_runtime(TIMEZONE_MODE, timezone)
-    _write_runtime(runtime / "keyboard-backlight", keyboard_backlight)
-    if keyboard_backlight == "off":
+    for diagnostic in config.diagnostics:
+        print("4TW-OS: " + diagnostic + ".", flush=True)
+    try:
+        write_firefox_policy(config.start_url, config.site_lock, config.allowed_extra_domains)
+    except (OSError, ValueError, json.JSONDecodeError):
+        # The build installs a safe default policy. Keep boot moving if an
+        # unexpected filesystem error prevents the runtime refresh.
+        print("4TW-OS: Firefox policy refresh failed; retaining the installed safe policy.", flush=True)
+        config = ApplianceConfig(ssid=config.ssid, psk=config.psk, timezone=config.timezone,
+                                 keyboard_backlight=config.keyboard_backlight)
+    _write_runtime(START_URL, config.start_url)
+    _write_runtime(TIMEZONE_MODE, config.timezone)
+    _write_runtime(runtime / "keyboard-backlight", config.keyboard_backlight)
+    if config.keyboard_backlight == "off":
         # Absence of a recognised standard LED is a safe no-op.
         set_keyboard_backlight("off")
-    applied_zone, applied = prepare_timezone(timezone)
+    applied_zone, applied = prepare_timezone(config.timezone)
     if not applied:
         print("4TW-OS: could not apply timezone " + applied_zone + "; continuing kiosk startup.", flush=True)
     rtc_status = import_local_rtc()
@@ -886,17 +1020,17 @@ def configure_runtime():
         return
 
     _write_runtime(WIFI_STATUS, "failed")
-    if not ssid:
+    if not config.ssid:
         print("4TW-OS: Wi-Fi credentials are not configured.", flush=True)
     else:
         NETWORK_CONNECTION.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(NETWORK_CONNECTION, flags, 0o600)
         with os.fdopen(fd, "w") as handle:
-            handle.write(nm_keyfile(ssid, psk))
+            handle.write(nm_keyfile(config.ssid, config.psk))
         connected = _start_network() and connect_wifi()
         _write_runtime(WIFI_STATUS, "connected" if connected else "failed")
         if not connected:
             print("4TW-OS: Wi-Fi did not connect; the fixed session prompt will offer choices.", flush=True)
-        elif timezone == "auto":
+        elif config.timezone == "auto":
             _schedule_timezone()
